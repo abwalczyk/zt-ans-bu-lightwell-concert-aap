@@ -1,0 +1,175 @@
+---
+- name: Deploy Flask application on rhel01
+  hosts: appservers
+  gather_facts: true
+  become: true
+
+  vars_files:
+    - vars/workshop.yml
+
+  tasks:
+    # ── DNS / hosts ──────────────────────────────────────────────────
+    - name: Ensure control host resolves
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: "^192\\.168\\.1\\.10 "
+        line: "192.168.1.10 control aap.example.org"
+        state: present
+
+    - name: Ensure gitea host resolves
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        line: "192.168.1.10 gitea"
+        state: present
+
+    # ── SELinux ──────────────────────────────────────────────────────
+    - name: Set SELinux to permissive for Flask development
+      ansible.posix.selinux:
+        policy: targeted
+        state: permissive
+
+    # ── Firewalld ────────────────────────────────────────────────────
+    - name: Install and start firewalld
+      block:
+        - name: Install firewalld
+          ansible.builtin.dnf:
+            name: firewalld
+            state: present
+
+        - name: Start firewalld
+          ansible.builtin.systemd:
+            name: firewalld
+            state: started
+            enabled: true
+
+        - name: Open Flask application port
+          ansible.posix.firewalld:
+            port: "{{ app_port }}/tcp"
+            permanent: true
+            state: enabled
+            immediate: true
+
+    # ── Python and Flask setup ───────────────────────────────────────
+    - name: Install Python development packages
+      ansible.builtin.dnf:
+        name:
+          - python3
+          - python3-devel
+          - python3-pip
+          - git
+          - gcc
+        state: present
+
+    - name: Create Flask application user
+      ansible.builtin.user:
+        name: "{{ flask_app_user }}"
+        comment: "Flask Application User"
+        create_home: true
+        shell: /bin/bash
+
+    - name: Create Flask application directory
+      ansible.builtin.file:
+        path: "{{ flask_app_dir }}"
+        state: directory
+        owner: "{{ flask_app_user }}"
+        group: "{{ flask_app_user }}"
+        mode: '0755'
+
+    - name: Deploy Flask application file
+      ansible.builtin.copy:
+        dest: "{{ flask_app_dir }}/app.py"
+        owner: "{{ flask_app_user }}"
+        group: "{{ flask_app_user }}"
+        mode: '0644'
+        content: |
+          #!/usr/bin/env python3
+          from flask import Flask, request, jsonify
+          import yaml
+          import pkg_resources
+
+          app = Flask(__name__)
+
+          @app.route('/')
+          def index():
+              return jsonify({
+                  "name": "Flask API Application",
+                  "version": "1.0.0",
+                  "lab": "Concert + AAP + Lightwell CVE Remediation"
+              })
+
+          @app.route('/health')
+          def health():
+              pyyaml_version = pkg_resources.get_distribution("pyyaml").version
+              return jsonify({
+                  "status": "healthy",
+                  "pyyaml_version": pyyaml_version
+              })
+
+          @app.route('/api/parse-yaml', methods=['POST'])
+          def parse_yaml():
+              try:
+                  yaml_data = request.get_data(as_text=True)
+                  pyyaml_version = pkg_resources.get_distribution("pyyaml").version
+                  parsed = yaml.safe_load(yaml_data)
+                  return jsonify({
+                      "parsed": parsed,
+                      "pyyaml_version": pyyaml_version
+                  })
+              except Exception as e:
+                  return jsonify({"error": str(e)}), 400
+
+          if __name__ == '__main__':
+              app.run(host='0.0.0.0', port={{ app_port }}, debug=False)
+
+    - name: Deploy requirements.txt with vulnerable PyYAML
+      ansible.builtin.copy:
+        dest: "{{ flask_app_dir }}/requirements.txt"
+        owner: "{{ flask_app_user }}"
+        group: "{{ flask_app_user }}"
+        mode: '0644'
+        content: |
+          flask==2.3.2
+          pyyaml=={{ vulnerable_version }}
+          requests==2.31.0
+          gunicorn==21.2.0
+
+    - name: Install Flask application dependencies
+      ansible.builtin.pip:
+        requirements: "{{ flask_app_dir }}/requirements.txt"
+        state: present
+      become: true
+      become_user: "{{ flask_app_user }}"
+
+    - name: Create Flask systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/{{ flask_app_service }}.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Flask API Application
+          After=network.target
+
+          [Service]
+          User={{ flask_app_user }}
+          WorkingDirectory={{ flask_app_dir }}
+          ExecStart=/usr/bin/python3 {{ flask_app_dir }}/app.py
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Start and enable Flask application
+      ansible.builtin.systemd:
+        name: "{{ flask_app_service }}"
+        state: started
+        enabled: true
+        daemon_reload: true
+
+    - name: Wait for Flask application to be ready
+      ansible.builtin.uri:
+        url: "http://localhost:{{ app_port }}/health"
+        status_code: 200
+      register: flask_health
+      until: flask_health is success
+      retries: 10
+      delay: 2

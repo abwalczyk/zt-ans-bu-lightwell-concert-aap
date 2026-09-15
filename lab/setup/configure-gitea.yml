@@ -1,0 +1,64 @@
+---
+- name: Configure Gitea and create repositories
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  vars_files:
+    - vars/workshop.yml
+
+  tasks:
+    - name: Wait for Gitea to be available
+      ansible.builtin.uri:
+        url: "{{ gitea_url }}"
+        status_code: 200
+      register: _gitea_ping
+      until: _gitea_ping is success
+      retries: 30
+      delay: 2
+
+    - name: Create lab user in Gitea
+      ansible.builtin.uri:
+        url: "{{ gitea_url }}/api/v1/admin/users"
+        method: POST
+        user: "{{ gitea_admin_user }}"
+        password: "{{ gitea_admin_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          username: "{{ gitea_lab_user }}"
+          email: "{{ gitea_lab_user }}@lab.local"
+          password: "{{ gitea_lab_password }}"
+          must_change_password: false
+        status_code: [201, 422]  # 422 if user already exists
+      register: _gitea_user
+
+    - name: Check if repository exists
+      ansible.builtin.uri:
+        url: "{{ gitea_url }}/api/v1/repos/{{ gitea_lab_user }}/{{ target_app }}"
+        method: GET
+        user: "{{ gitea_lab_user }}"
+        password: "{{ gitea_lab_password }}"
+        force_basic_auth: true
+        status_code: [200, 404]
+      register: _gitea_repo_check
+
+    - name: Create Flask application repository
+      ansible.builtin.uri:
+        url: "{{ gitea_url }}/api/v1/user/repos"
+        method: POST
+        user: "{{ gitea_lab_user }}"
+        password: "{{ gitea_lab_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          name: "{{ target_app }}"
+          description: "Flask API application for Concert CVE remediation lab"
+          private: false
+          auto_init: true
+        status_code: 201
+      when: _gitea_repo_check.status == 404
+
+    - name: Display Gitea repository URL
+      ansible.builtin.debug:
+        msg: "Gitea repository created at {{ gitea_url }}/{{ gitea_lab_user }}/{{ target_app }}"

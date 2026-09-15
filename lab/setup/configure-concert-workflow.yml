@@ -1,0 +1,66 @@
+---
+- name: Display Concert Workflow configuration instructions
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  vars_files:
+    - vars/workshop.yml
+
+  tasks:
+    - name: Display Concert Workflow configuration instructions
+      ansible.builtin.debug:
+        msg:
+          - "═══════════════════════════════════════════════════════════════"
+          - "Concert Workflow Configuration"
+          - "═══════════════════════════════════════════════════════════════"
+          - ""
+          - "Concert Workflow must be configured manually via Concert UI or API."
+          - ""
+          - "Workflow Name: {{ concert_workflow_name }}"
+          - "AAP Endpoint: {{ aap_host }}/api/v2/workflow_job_templates/<ID>/launch/"
+          - ""
+          - "Required Workflow Blocks:"
+          - "  1. Extract CVE Context (Python FaaS)"
+          - "  2. Determine Lab ID (Script)"
+          - "  3. HTTP Request to AAP"
+          - ""
+          - "HTTP Request Configuration:"
+          - "  Method: POST"
+          - "  URL: {{ aap_host }}/api/v2/workflow_job_templates/<ID>/launch/"
+          - "  Headers:"
+          - "    Authorization: Bearer <AAP_TOKEN>"
+          - "    Content-Type: application/json"
+          - "  Body:"
+          - "    {"
+          - "      \"extra_vars\": {"
+          - "        \"cve_id\": \"${cve_data.cve_id}\","
+          - "        \"severity\": \"${cve_data.severity}\","
+          - "        \"cvss_score\": ${cve_data.cvss_score},"
+          - "        \"affected_dependency\": \"${cve_data.affected_dependency}\","
+          - "        \"lab_id\": \"${cve_data.lab_id}\""
+          - "      }"
+          - "    }"
+          - ""
+          - "Concert Automation Rule:"
+          - "  Trigger: CVE detected in Vulnerability dimension"
+          - "  Threshold: CVSS >= 7.0 OR IBM Risk Score >= 70"
+          - "  Action: Trigger Workflow '{{ concert_workflow_name }}'"
+          - ""
+          - "For detailed Concert Workflow JSON definition, see:"
+          - "  lab/playbooks/concert/concert-workflow-definition.json"
+          - ""
+          - "═══════════════════════════════════════════════════════════════"
+
+    - name: Check if Concert API credentials are available
+      ansible.builtin.fail:
+        msg: "Concert API credentials not configured. Set CONCERT_API_URL and CONCERT_API_TOKEN environment variables."
+      when: concert_api_url == "" or concert_api_token == ""
+      ignore_errors: true
+
+    - name: Display Concert API information
+      ansible.builtin.debug:
+        msg:
+          - "Concert API URL: {{ concert_api_url }}"
+          - "Concert API Token: {{ 'Configured' if concert_api_token != '' else 'Not configured' }}"
+      when: concert_api_url != ""

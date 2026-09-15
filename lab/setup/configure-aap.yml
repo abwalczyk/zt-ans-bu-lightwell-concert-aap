@@ -1,0 +1,198 @@
+---
+- name: Configure AAP Controller for Concert lab
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  vars_files:
+    - vars/workshop.yml
+
+  vars:
+    controller_oauth_token: "{{ controller_oauth_token_override | default(omit) }}"
+
+  module_defaults:
+    group/ansible.controller.controller:
+      controller_host: "{{ aap_host }}"
+      controller_username: "{{ aap_user }}"
+      controller_password: "{{ aap_password }}"
+      controller_oauthtoken: "{{ controller_oauth_token | default(omit) }}"
+      validate_certs: false
+
+  tasks:
+    # ── Credential ─────────────────────────────────────────────────────
+    - name: Create machine credential for app server
+      ansible.controller.credential:
+        name: "{{ workshop_credential_name }}"
+        organization: "{{ workshop_org }}"
+        credential_type: Machine
+        inputs:
+          username: rhel
+          password: ansible123!
+          become_method: sudo
+          become_username: root
+        state: present
+
+    # ── Project ────────────────────────────────────────────────────────
+    - name: Create Concert CVE lab project
+      ansible.controller.project:
+        name: "{{ workshop_project_name }}"
+        organization: "{{ workshop_org }}"
+        scm_type: git
+        scm_url: "{{ gitea_url }}/{{ gitea_repo }}.git"
+        scm_update_on_launch: false
+        state: present
+      register: _project
+
+    - name: Sync project from SCM
+      ansible.controller.project_update:
+        project: "{{ workshop_project_name }}"
+        wait: true
+        timeout: 120
+
+    # ── Inventory ──────────────────────────────────────────────────────
+    - name: Create Concert lab inventory
+      ansible.controller.inventory:
+        name: "{{ workshop_inventory_name }}"
+        organization: "{{ workshop_org }}"
+        variables:
+          ansible_become: true
+          target_cve: "{{ target_cve }}"
+          vulnerable_package: "{{ vulnerable_package }}"
+          vulnerable_version: "{{ vulnerable_version }}"
+          fixed_version: "{{ fixed_version }}"
+        state: present
+
+    - name: Add appservers group
+      ansible.controller.group:
+        name: appservers
+        inventory: "{{ workshop_inventory_name }}"
+        variables:
+          app_port: "{{ app_port }}"
+        state: present
+
+    - name: Add rhel01 host
+      ansible.controller.host:
+        name: "{{ app_server_host }}"
+        inventory: "{{ workshop_inventory_name }}"
+        variables:
+          ansible_host: "{{ app_server_host }}"
+        state: present
+
+    - name: Add rhel01 to appservers group
+      ansible.controller.group:
+        name: appservers
+        inventory: "{{ workshop_inventory_name }}"
+        hosts:
+          - "{{ app_server_host }}"
+        state: present
+
+    # ── Job Templates ──────────────────────────────────────────────────
+    - name: Create job template - Fetch Lightwell Artifact
+      ansible.controller.job_template:
+        name: "Concert - Fetch Lightwell Artifact"
+        organization: "{{ workshop_org }}"
+        job_type: run
+        inventory: "{{ workshop_inventory_name }}"
+        project: "{{ workshop_project_name }}"
+        playbook: lab/playbooks/aap/fetch-lightwell-artifact.yml
+        credentials:
+          - "{{ workshop_credential_name }}"
+        execution_environment: "{{ workshop_ee_name }}"
+        ask_variables_on_launch: true
+        extra_vars:
+          cve_id: "{{ target_cve }}"
+          package_name: "{{ vulnerable_package }}"
+        state: present
+
+    - name: Create job template - Update Dependency in Gitea
+      ansible.controller.job_template:
+        name: "Concert - Update Dependency in Gitea"
+        organization: "{{ workshop_org }}"
+        job_type: run
+        inventory: "{{ workshop_inventory_name }}"
+        project: "{{ workshop_project_name }}"
+        playbook: lab/playbooks/aap/update-dependency-gitea.yml
+        credentials:
+          - "{{ workshop_credential_name }}"
+        execution_environment: "{{ workshop_ee_name }}"
+        ask_variables_on_launch: true
+        extra_vars:
+          cve_id: "{{ target_cve }}"
+          fixed_version: "{{ fixed_version }}"
+        state: present
+
+    - name: Create job template - Validate Remediation
+      ansible.controller.job_template:
+        name: "Concert - Validate Remediation"
+        organization: "{{ workshop_org }}"
+        job_type: run
+        inventory: "{{ workshop_inventory_name }}"
+        project: "{{ workshop_project_name }}"
+        playbook: lab/playbooks/validation/validate-remediation.yml
+        credentials:
+          - "{{ workshop_credential_name }}"
+        execution_environment: "{{ workshop_ee_name }}"
+        ask_variables_on_launch: true
+        extra_vars:
+          cve_id: "{{ target_cve }}"
+          expected_version: "{{ fixed_version }}"
+        state: present
+
+    # ── Workflow ───────────────────────────────────────────────────────
+    - name: Create Concert CVE Remediation workflow
+      ansible.controller.workflow_job_template:
+        name: "Concert CVE Remediation Orchestrator"
+        organization: "{{ workshop_org }}"
+        inventory: "{{ workshop_inventory_name }}"
+        ask_variables_on_launch: true
+        extra_vars:
+          cve_id: "{{ target_cve }}"
+        state: present
+      register: _workflow
+
+    - name: Add workflow node - Fetch Lightwell Artifact
+      ansible.controller.workflow_job_template_node:
+        workflow_job_template: "Concert CVE Remediation Orchestrator"
+        identifier: fetch_lightwell
+        unified_job_template: "Concert - Fetch Lightwell Artifact"
+        state: present
+      register: _node_fetch
+
+    - name: Add workflow node - Update Dependency
+      ansible.controller.workflow_job_template_node:
+        workflow_job_template: "Concert CVE Remediation Orchestrator"
+        identifier: update_dependency
+        unified_job_template: "Concert - Update Dependency in Gitea"
+        state: present
+      register: _node_update
+
+    - name: Add workflow node - Validate Remediation
+      ansible.controller.workflow_job_template_node:
+        workflow_job_template: "Concert CVE Remediation Orchestrator"
+        identifier: validate_remediation
+        unified_job_template: "Concert - Validate Remediation"
+        state: present
+      register: _node_validate
+
+    - name: Link fetch → update
+      ansible.controller.workflow_job_template_node:
+        workflow_job_template: "Concert CVE Remediation Orchestrator"
+        identifier: update_dependency
+        always_nodes:
+          - fetch_lightwell
+        state: present
+
+    - name: Link update → validate
+      ansible.controller.workflow_job_template_node:
+        workflow_job_template: "Concert CVE Remediation Orchestrator"
+        identifier: validate_remediation
+        success_nodes:
+          - update_dependency
+        state: present
+
+    - name: Display workflow information
+      ansible.builtin.debug:
+        msg:
+          - "Concert CVE Remediation workflow created"
+          - "Workflow ID: {{ _workflow.id }}"
+          - "Workflow URL: {{ aap_host }}/#/templates/workflow_job_template/{{ _workflow.id }}"

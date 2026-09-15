@@ -1,12 +1,17 @@
 ---
 all:
   hosts:
-    app-gitea:
-      ansible_host: app-gitea
-      ansible_user: labuser
+    control:
+      ansible_host: control
+      ansible_user: rhel
       ansible_password: ansible123!
-      ansible_become_password: ansible123!
+
+    rhel01:
+      ansible_host: rhel01
+      ansible_user: rhel
+      ansible_password: ansible123!
+
   children:
-    app:
+    appservers:
       hosts:
-        app-gitea:
+        rhel01:
