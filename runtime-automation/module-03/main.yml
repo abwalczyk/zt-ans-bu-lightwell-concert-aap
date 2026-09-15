@@ -1,0 +1,17 @@
+---
+# Module 03 Runtime Automation
+# Validation Module
+
+- name: Module 03 - Remediation Validation
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Display Module 03 information
+      ansible.builtin.debug:
+        msg:
+          - "Module 03: VALIDATE — Remediation Verification"
+          - "This module demonstrates validation and audit trail review"
+          - "Students will verify CVE resolution and generate reports"
+
+    # Add module-specific runtime tasks here
+    # Example: Run validation playbooks, generate reports

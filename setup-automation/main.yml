@@ -1,0 +1,92 @@
+---
+# Concert + AAP + Lightwell Lab Setup
+# Provisions and configures all lab infrastructure
+
+# Phase 1: Build dynamic inventory
+- name: Create inventory
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../config/secrets.yaml
+  tasks:
+    - name: Add app-gitea host
+      ansible.builtin.add_host:
+        name: app-gitea
+        ansible_ssh_host: app-gitea
+        ansible_ssh_port: "{{ lookup('ansible.builtin.env', 'BASTION_PORT') }}"
+        ansible_ssh_user: "{{ lookup('ansible.builtin.env', 'BASTION_USER') | default('rhel', true) }}"
+        ansible_ssh_pass: "{{ lookup('ansible.builtin.env', 'BASTION_PASSWORD') | default('ansible123!', true) }}"
+        ansible_become_password: "{{ lookup('ansible.builtin.env', 'BASTION_PASSWORD') | default('ansible123!', true) }}"
+        ansible_python_interpreter: /usr/bin/python3
+        net_interface: eth1
+        net_address: 192.168.1.10/24
+        net_dns: ""
+        net_dns_search: ""
+        selinux_mode: permissive
+
+# Phase 2: Common bootstrap on all hosts
+- name: Common bootstrap
+  hosts: all:!localhost
+  gather_facts: false
+  become: true
+  vars_files:
+    - ../config/secrets.yaml
+  vars:
+    tmm_org: "{{ tmm_orgid }}"
+    tmm_id: "{{ tmm_activation }}"
+    hosts_entries:
+      - ip: 192.168.1.10
+        names:
+          - app-gitea
+          - flask-app
+          - gitea
+  tasks:
+    - name: Include common bootstrap tasks
+      ansible.builtin.import_tasks: tasks/common-bootstrap.yml
+
+# Phase 3: Setup app-gitea host
+- name: Setup app-gitea host
+  hosts: app-gitea
+  gather_facts: true
+  become: true
+  vars_files:
+    - ../config/secrets.yaml
+  tasks:
+    - name: Include app-gitea setup tasks
+      ansible.builtin.import_tasks: tasks/setup-app-gitea.yml
+
+# Phase 4: Configure app-gitea (Flask app + Gitea)
+- name: Configure app-gitea
+  hosts: app-gitea
+  gather_facts: true
+  become: true
+  vars_files:
+    - ../config/secrets.yaml
+  tasks:
+    - name: Include app-gitea configuration tasks
+      ansible.builtin.import_tasks: tasks/configure-app-gitea.yml
+
+# Phase 5: Configure AAP Controller
+- name: Configure AAP Controller
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../config/secrets.yaml
+  tasks:
+    - name: Include AAP configuration tasks
+      ansible.builtin.import_tasks: tasks/configure-aap.yml
+      tags: aap
+
+# Phase 6: Configure Concert Workflow (optional)
+- name: Configure Concert Workflow
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../config/secrets.yaml
+  tasks:
+    - name: Display Concert configuration instructions
+      ansible.builtin.debug:
+        msg: |
+          Concert Workflow must be configured manually or via Concert API.
+          See lab/setup/configure-concert-workflow.yml for instructions.
+      tags: concert

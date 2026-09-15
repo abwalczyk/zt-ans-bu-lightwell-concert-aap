@@ -1,0 +1,6 @@
+* xref:index.adoc[Workshop Home]
+* xref:01-overview.adoc[Lab Overview]
+* xref:02-module-01-concert.adoc[Module 1: DISCOVER — Concert CVE Detection]
+* xref:03-module-02-aap.adoc[Module 2: ORCHESTRATE — AAP Remediation]
+* xref:04-module-03-validate.adoc[Module 3: VALIDATE — Remediation Verification]
+* xref:99-conclusion.adoc[Conclusion]

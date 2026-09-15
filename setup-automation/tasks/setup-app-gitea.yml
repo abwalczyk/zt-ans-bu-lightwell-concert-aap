@@ -1,0 +1,59 @@
+---
+# Setup tasks for app-gitea host
+# Installs Python, Flask dependencies, Gitea, and required packages
+
+- name: Install Python development packages
+  ansible.builtin.dnf:
+    name:
+      - python3
+      - python3-devel
+      - python3-pip
+      - gcc
+      - git
+    state: present
+
+- name: Install Gitea binary
+  ansible.builtin.get_url:
+    url: https://dl.gitea.com/gitea/1.21.0/gitea-1.21.0-linux-amd64
+    dest: /usr/local/bin/gitea
+    mode: '0755'
+
+- name: Create gitea user
+  ansible.builtin.user:
+    name: gitea
+    comment: Gitea Git Service
+    home: /var/lib/gitea
+    shell: /bin/bash
+    system: true
+
+- name: Create Gitea directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: gitea
+    group: gitea
+    mode: '0750'
+  loop:
+    - /etc/gitea
+    - /var/lib/gitea
+    - /var/lib/gitea/custom
+    - /var/lib/gitea/data
+    - /var/lib/gitea/log
+
+- name: Create Flask application directory
+  ansible.builtin.file:
+    path: /opt/flask-app
+    state: directory
+    owner: "{{ lab_user }}"
+    group: "{{ lab_user }}"
+    mode: '0755'
+
+- name: Open firewall ports
+  ansible.posix.firewalld:
+    port: "{{ item }}"
+    permanent: true
+    state: enabled
+    immediate: true
+  loop:
+    - 5000/tcp   # Flask
+    - 3000/tcp   # Gitea

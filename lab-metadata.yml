@@ -1,0 +1,33 @@
+# lab-metadata.yml
+# Single Point of Truth for Lab Information
+
+lab:
+  name: "Concert + AAP + Lightwell CVE Remediation"
+  shortname: "zt-ans-bu-lightwell-concert-aap"
+  maintainer: "Red Hat TMM (placeholder@redhat.com)"
+
+  description:
+    summary: "AI-driven CVE remediation with IBM Concert, Ansible Automation Platform, and Red Hat Lightwell"
+    goal: "Demonstrate Concert-driven CVE discovery and triage, AAP orchestration of remediation, and Lightwell patching through Gitea CI/CD"
+    concepts:
+     - "IBM Concert CVE correlation"
+     - "Concert Workflows and automation rules"
+     - "Ansible Automation Platform orchestration"
+     - "Red Hat Lightwell remediated dependencies"
+     - "Gitea CI/CD pipeline integration"
+     - "CVE lifecycle automation"
+    use_case: "End-to-end automated CVE remediation from discovery to validation"
+    time_to_complete: "90"
+
+  git_ref:
+    production: "v1.0.0"
+    development: "main"
+
+# DYNAMIC EXTRACTION SOURCES:
+# ===========================
+#
+# GENERATED FILES:
+# description.adoc: Generated from lab.description (goal, concepts, use_case)
+# README.md: Generated from configuration extraction (maintainer, summary, instances, networks, firewall)
+# dev.yaml: Generated using git_ref.development (defaults to "main" if not specified)
+# prod.yaml: Generated using git_ref.production (required)

@@ -1,0 +1,12 @@
+---
+all:
+  hosts:
+    app-gitea:
+      ansible_host: app-gitea
+      ansible_user: labuser
+      ansible_password: ansible123!
+      ansible_become_password: ansible123!
+  children:
+    app:
+      hosts:
+        app-gitea:

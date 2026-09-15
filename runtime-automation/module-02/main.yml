@@ -1,0 +1,17 @@
+---
+# Module 02 Runtime Automation
+# AAP Orchestration Module
+
+- name: Module 02 - AAP Remediation Orchestration
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Display Module 02 information
+      ansible.builtin.debug:
+        msg:
+          - "Module 02: ORCHESTRATE — AAP Remediation Workflow"
+          - "This module demonstrates AAP orchestrating Lightwell + Gitea"
+          - "Students will monitor AAP workflow execution"
+
+    # Add module-specific runtime tasks here
+    # Example: Trigger AAP workflow, monitor status

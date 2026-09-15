@@ -1,0 +1,99 @@
+---
+# Configure app-gitea host
+# Deploys Flask application, starts Gitea, creates repositories
+
+- name: Deploy Flask application files
+  ansible.builtin.template:
+    src: "../../lab/templates/{{ item }}.j2"
+    dest: "/opt/flask-app/{{ item }}"
+    owner: "{{ lab_user }}"
+    group: "{{ lab_user }}"
+    mode: '0644'
+  loop:
+    - app.py
+    - requirements.txt
+  tags: flask
+
+- name: Install Flask application dependencies
+  ansible.builtin.pip:
+    requirements: /opt/flask-app/requirements.txt
+    state: present
+  tags: flask
+
+- name: Create Flask systemd service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/flask-app.service
+    content: |
+      [Unit]
+      Description=Flask API Application
+      After=network.target
+
+      [Service]
+      User={{ lab_user }}
+      WorkingDirectory=/opt/flask-app
+      ExecStart=/usr/bin/python3 /opt/flask-app/app.py
+      Restart=always
+
+      [Install]
+      WantedBy=multi-user.target
+    mode: '0644'
+  tags: flask
+
+- name: Start and enable Flask application
+  ansible.builtin.systemd:
+    name: flask-app
+    state: started
+    enabled: true
+    daemon_reload: true
+  tags: flask
+
+- name: Initialize Gitea database
+  ansible.builtin.command:
+    cmd: /usr/local/bin/gitea migrate
+  become: true
+  become_user: gitea
+  environment:
+    GITEA_WORK_DIR: /var/lib/gitea
+  args:
+    creates: /var/lib/gitea/data/gitea.db
+  tags: gitea
+
+- name: Create Gitea systemd service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/gitea.service
+    content: |
+      [Unit]
+      Description=Gitea (Git with a cup of tea)
+      After=network.target
+
+      [Service]
+      Type=simple
+      User=gitea
+      Group=gitea
+      WorkingDirectory=/var/lib/gitea
+      ExecStart=/usr/local/bin/gitea web --config /etc/gitea/app.ini
+      Restart=always
+      Environment=USER=gitea HOME=/var/lib/gitea GITEA_WORK_DIR=/var/lib/gitea
+
+      [Install]
+      WantedBy=multi-user.target
+    mode: '0644'
+  tags: gitea
+
+- name: Start and enable Gitea
+  ansible.builtin.systemd:
+    name: gitea
+    state: started
+    enabled: true
+    daemon_reload: true
+  tags: gitea
+
+- name: Wait for Gitea to be ready
+  ansible.builtin.uri:
+    url: http://localhost:3000
+    status_code: 200
+  register: gitea_ready
+  until: gitea_ready is success
+  retries: 30
+  delay: 2
+  tags: gitea

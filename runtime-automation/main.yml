@@ -1,0 +1,14 @@
+---
+# Runtime Automation - Per-module automation tasks
+# Executed during lab runtime to support module exercises
+
+- name: Execute module-specific runtime automation
+  hosts: localhost
+  gather_facts: false
+  vars:
+    module_number: "{{ lookup('env', 'MODULE_NUMBER') | default('01', true) }}"
+
+  tasks:
+    - name: Execute Module 01 runtime automation
+      ansible.builtin.include_tasks: "module-{{ module_number }}/main.yml"
+      when: module_number is defined

@@ -1,0 +1,69 @@
+---
+# Validate CVE Remediation
+# Confirms PyYAML version upgraded, application healthy, CVE resolved
+
+- name: Validate CVE remediation success
+  hosts: app-gitea
+  gather_facts: false
+  vars:
+    cve_id: "{{ cve_id | default('CVE-2026-52891') }}"
+    expected_version: "{{ fixed_version | default('6.0.2') }}"
+
+  tasks:
+    - name: Check deployed PyYAML version
+      ansible.builtin.command:
+        cmd: pip show pyyaml
+      register: pyyaml_info
+      changed_when: false
+
+    - name: Extract PyYAML version
+      ansible.builtin.set_fact:
+        deployed_version: "{{ pyyaml_info.stdout | regex_search('Version: ([0-9.]+)', '\\1') | first }}"
+
+    - name: Verify PyYAML version is remediated
+      ansible.builtin.assert:
+        that:
+          - deployed_version is version(expected_version, '>=')
+        fail_msg: "PyYAML version {{ deployed_version }} is still vulnerable"
+        success_msg: "PyYAML version {{ deployed_version }} is remediated"
+
+    - name: Test Flask application health
+      ansible.builtin.uri:
+        url: http://localhost:5000/health
+        return_content: true
+      register: health_check
+
+    - name: Verify application reports correct PyYAML version
+      ansible.builtin.assert:
+        that:
+          - health_check.json.pyyaml_version is version(expected_version, '>=')
+        fail_msg: "Application reports incorrect PyYAML version"
+        success_msg: "Application health check passed"
+
+    - name: Test YAML parsing endpoint
+      ansible.builtin.uri:
+        url: http://localhost:5000/api/parse-yaml
+        method: POST
+        body: "name: test\nvalue: 123"
+        headers:
+          Content-Type: text/plain
+        return_content: true
+      register: yaml_parse_test
+
+    - name: Display validation results
+      ansible.builtin.debug:
+        msg:
+          - "CVE {{ cve_id }} Remediation Validated ✓"
+          - "Deployed Version: {{ deployed_version }}"
+          - "Expected Version: {{ expected_version }}"
+          - "Application Health: {{ health_check.json.status }}"
+          - "YAML Parsing: Functional"
+
+    - name: Set stats for AAP workflow
+      ansible.builtin.set_stats:
+        data:
+          validation_status: "success"
+          deployed_version: "{{ deployed_version }}"
+          expected_version: "{{ expected_version }}"
+          cve_resolved: true
+          validation_timestamp: "{{ ansible_date_time.iso8601 }}"

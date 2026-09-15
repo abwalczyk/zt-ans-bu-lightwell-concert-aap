@@ -1,0 +1,56 @@
+---
+# Update Application Dependency in Gitea
+# Creates a Git branch, updates requirements.txt, commits and pushes
+
+- name: Update PyYAML dependency in Gitea
+  hosts: app-gitea
+  gather_facts: false
+  vars:
+    cve_id: "{{ cve_id | default('CVE-2026-52891') }}"
+    fixed_version: "{{ fixed_version | default('6.0.2') }}"
+    gitea_repo_path: "/home/{{ ansible_user }}/flask-api-app"
+    branch_name: "cve-remediation/{{ cve_id }}"
+
+  tasks:
+    - name: Clone Gitea repository
+      ansible.builtin.git:
+        repo: "http://localhost:3000/labuser/flask-api-app.git"
+        dest: "{{ gitea_repo_path }}"
+        version: main
+        force: true
+
+    - name: Create remediation branch
+      ansible.builtin.command:
+        cmd: git checkout -b {{ branch_name }}
+        chdir: "{{ gitea_repo_path }}"
+      ignore_errors: true
+
+    - name: Update requirements.txt with fixed PyYAML version
+      ansible.builtin.lineinfile:
+        path: "{{ gitea_repo_path }}/requirements.txt"
+        regexp: '^pyyaml=='
+        line: "pyyaml=={{ fixed_version }}  # Remediated via Lightwell ({{ cve_id }})"
+        state: present
+
+    - name: Commit changes
+      ansible.builtin.command:
+        cmd: >
+          git commit -am "Remediate {{ cve_id }} via Lightwell artifact"
+        chdir: "{{ gitea_repo_path }}"
+      environment:
+        GIT_AUTHOR_NAME: "Concert Automation"
+        GIT_AUTHOR_EMAIL: "automation@concert.local"
+        GIT_COMMITTER_NAME: "Concert Automation"
+        GIT_COMMITTER_EMAIL: "automation@concert.local"
+
+    - name: Push changes to Gitea
+      ansible.builtin.command:
+        cmd: git push origin {{ branch_name }}
+        chdir: "{{ gitea_repo_path }}"
+
+    - name: Set stats for AAP workflow
+      ansible.builtin.set_stats:
+        data:
+          gitea_branch: "{{ branch_name }}"
+          gitea_repo: "flask-api-app"
+          commit_message: "Remediate {{ cve_id }} via Lightwell artifact"

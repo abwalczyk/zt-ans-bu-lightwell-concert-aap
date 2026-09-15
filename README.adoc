@@ -1,0 +1,141 @@
+= Concert + AAP + Lightwell CVE Remediation Lab
+:toc: auto
+
+A hands-on workshop demonstrating AI-driven CVE remediation using IBM Concert for
+vulnerability discovery and triage, Ansible Automation Platform for orchestration,
+Red Hat Lightwell for remediated dependencies, and Gitea CI/CD for automated deployment.
+
+== Workshop Modules
+
+[cols="1,2,2"]
+|===
+| Module | Focus | Hands-on exercises
+
+| *DISCOVER -- Concert CVE Detection*
+| IBM Concert discovers CVE-2026-52891 (PyYAML deserialization) in a Flask application,
+performs risk scoring and correlation, then triggers automated remediation via Concert Workflows.
+| Configure Concert Automation Rule; review Concert Workflow that calls AAP API; observe CVE triage decision.
+
+| *ORCHESTRATE -- AAP Remediation Workflow*
+| Ansible Automation Platform receives the Concert payload, orchestrates Lightwell artifact
+retrieval, updates application dependencies in Gitea, triggers CI/CD pipeline, and validates remediation.
+| Execute AAP workflow template; observe Lightwell integration; monitor Gitea pipeline; review audit trail.
+
+| *VALIDATE -- Remediation Verification*
+| Verify that the vulnerable PyYAML 5.4.1 has been replaced with Lightwell-remediated 6.0.2,
+application health is confirmed, and the deserialization attack is blocked.
+| Run validation playbooks; test application endpoints; confirm CVE resolved; generate compliance report.
+|===
+
+== Architecture
+
+[cols="1,2"]
+|===
+| Host | Role
+
+| `control`     | AAP Controller 2.7+ (shared across labs)
+| `app-gitea`   | Flask application + Gitea server + Gitea Actions runner
+| `Concert`     | IBM Concert instance (shared, cloud-hosted)
+| `Lightwell`   | Red Hat Lightwell service (shared)
+|===
+
+== Repository Structure
+
+[source]
+----
+zt-ans-bu-lightwell-concert-aap/
+├── config/                          # VM topology, firewall rules, secrets
+│   ├── instances.yaml               # VM and container definitions
+│   ├── networks.yaml                # Network configuration
+│   ├── firewall.yaml                # Firewall rules
+│   └── secrets.yaml                 # Credentials and tokens
+├── content/                         # Showroom Antora pages
+│   ├── antora.yml
+│   ├── lib/                         # Antora extensions
+│   └── modules/ROOT/
+│       ├── pages/                   # Lab guide pages
+│       ├── images/                  # Screenshots and diagrams
+│       ├── partials/                # Reusable content snippets
+│       └── nav.adoc                 # Navigation structure
+├── setup-automation/
+│   ├── main.yml                     # Lab environment setup orchestration
+│   ├── ansible.cfg
+│   └── tasks/
+│       ├── common-bootstrap.yml     # SSH, networking, RHSM
+│       ├── setup-app-gitea.yml      # Deploy Flask app + Gitea
+│       ├── configure-app-gitea.yml  # Configure Gitea repos, runners
+│       └── configure-aap.yml        # AAP job templates, credentials
+├── lab/                             # Workshop content
+│   ├── playbooks/
+│   │   ├── concert/                 # Concert integration playbooks
+│   │   ├── aap/                     # AAP remediation playbooks
+│   │   ├── validation/              # Validation and testing playbooks
+│   │   └── tasks/                   # Reusable tasks
+│   ├── setup/                       # Lab configuration playbooks
+│   │   ├── configure-aap.yml
+│   │   ├── configure-concert-workflow.yml
+│   │   ├── deploy-flask-app.yml
+│   │   └── vars/workshop.yml
+│   ├── inventory/
+│   │   └── workshop.yml             # Lab inventory
+│   ├── templates/
+│   │   ├── requirements.txt.j2      # Python dependencies
+│   │   ├── app.py.j2                # Flask application
+│   │   └── sbom.json.j2             # CycloneDX SBOM
+│   ├── collections/
+│   │   └── requirements.yml         # Ansible collections
+│   └── content/                     # Embedded lab guide
+│       └── modules/ROOT/pages/
+├── runtime-automation/              # Per-module runtime automation
+│   ├── module-01/                   # Concert CVE detection
+│   ├── module-02/                   # AAP orchestration
+│   └── module-03/                   # Validation and reporting
+├── site.yml                         # Showroom site configuration
+├── ui-config.yml                    # Showroom UI configuration
+└── README.adoc
+----
+
+== Setup
+
+The automated setup provisions infrastructure and configures Concert Workflow, AAP job
+templates, and the vulnerable Flask application. Students will execute the remediation
+workflow and observe the CVE lifecycle.
+
+=== What the setup creates
+
+* Flask application with PyYAML 5.4.1 (vulnerable to CVE-2026-52891)
+* Gitea server with application repository and CI/CD pipeline
+* AAP job templates for remediation orchestration
+* Concert Workflow configured to call AAP API
+* Concert Automation Rule to trigger on CVE detection
+
+=== What attendees execute
+
+* Trigger Concert CVE detection (or observe auto-trigger)
+* Monitor Concert Workflow execution
+* Observe AAP remediation orchestration
+* Watch Gitea CI/CD pipeline build and deploy
+* Validate remediation success
+
+== Prerequisites
+
+* OpenShift Virtualization cluster with RHDP provisioner
+* AAP 2.7+ controller (shared or per-lab)
+* IBM Concert instance (shared, cloud-hosted)
+* Red Hat Lightwell access
+* RHEL 9.x base image
+
+== Lab Flow
+
+1. **Concert Discovery**: Concert ingests SBOM, detects CVE-2026-52891 in PyYAML 5.4.1
+2. **Concert Triage**: CVSS 9.8 (Critical), remediation available (Lightwell), priority: URGENT
+3. **Concert Trigger**: Automation Rule triggers Concert Workflow
+4. **Concert → AAP**: HTTP Request block POSTs to AAP job template launch endpoint
+5. **AAP Orchestration**: Fetch Lightwell artifact, update requirements.txt, commit to Gitea
+6. **Gitea CI/CD**: Pipeline builds with PyYAML 6.0.2, runs tests, deploys application
+7. **AAP Validation**: Verify dependency version, test application health, confirm CVE resolved
+8. **Audit Trail**: Complete workflow history across Concert, AAP, Gitea
+
+== License
+
+Red Hat internal use.

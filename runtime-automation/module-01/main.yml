@@ -1,0 +1,17 @@
+---
+# Module 01 Runtime Automation
+# Concert CVE Detection Module
+
+- name: Module 01 - Concert CVE Detection Setup
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Display Module 01 information
+      ansible.builtin.debug:
+        msg:
+          - "Module 01: DISCOVER — Concert CVE Detection"
+          - "This module demonstrates Concert's CVE discovery and triage"
+          - "Students will observe Concert Workflow triggering AAP"
+
+    # Add module-specific runtime tasks here
+    # Example: Generate SBOM, upload to Concert, trigger workflow

@@ -1,0 +1,130 @@
+---
+containers:
+  - name: gitea
+    image: gitea/gitea:1.21-rootless
+    ports:
+      - name: gitea
+        containerPort: 3000
+        protocol: TCP
+    environment:
+      GITEA__DEFAULT__RUN_MODE: dev
+      GITEA__database__DB_TYPE: sqlite3
+      GITEA__database__PATH: /data/gitea/gitea.db
+      GITEA__picture__DISABLE_GRAVATAR: "true"
+      GITEA__repository__DEFAULT_PRIVATE: "false"
+      GITEA__repository__DEFAULT_PUSH_CREATE_PRIVATE: "false"
+      GITEA__repository__ENABLE_PUSH_CREATE_ORG: "true"
+      GITEA__repository__ENABLE_PUSH_CREATE_USER: "true"
+      GITEA__repository__ONLY_ALLOW_PUSH_IF_GITEA_ENVIRONMENT_SET: "false"
+      GITEA__security__INSTALL_LOCK: "true"
+      GITEA__server__SSH_DOMAIN: gitea
+      GITEA__service__DISABLE_REGISTRATION: "true"
+      GITEA__service__REQUIRE_SIGNIN_VIEW: "false"
+      GITEA__webhook__ALLOWED_HOST_LIST: "*"
+      GITEA__actions__ENABLED: "true"
+    volumeMounts:
+      - name: gitea-varlib
+        mountPath: /var/lib/gitea/
+      - name: gitea-data
+        mountPath: /data/
+      - name: gitea-etc
+        mountPath: /etc/gitea
+    volumes:
+      - name: gitea-data
+        emptyDir: {}
+      - name: gitea-etc
+        emptyDir: {}
+      - name: gitea-varlib
+        emptyDir: {}
+    commands:
+      - gitea admin user create --admin --username gitea --password ansible123!
+        --email gitea@gitea.local --must-change-password=false
+      - >
+        curl -X POST -H "Content-Type: application/json"
+        -u 'gitea:ansible123!'
+        -d '{"username": "labuser", "visibility": "public", "full_name": "Lab User"}'
+        http://localhost:3000/api/v1/users
+      - >
+        curl -X POST -H "accept: application/json" -H "Content-Type:
+        application/json" -u 'gitea:ansible123!' -d '{"clone_addr":
+        "https://github.com/rhpds/zt-ans-bu-lightwell-concert-aap.git", "repo_name":
+        "flask-api-app", "owner": "labuser", "private": false}'
+        http://localhost:3000/api/v1/repos/migrate
+    memory: 4Gi
+    services:
+      - name: gitea
+        ports:
+          - port: 3000
+            protocol: TCP
+            targetPort: 3000
+            name: gitea
+    routes:
+      - name: gitea
+        host: gitea
+        service: gitea
+        targetPort: 3000
+        tls: true
+        tls_termination: Edge
+
+virtualmachines:
+  - name: app-gitea
+    image: rhel-9.5-x86_64
+    memory: 16G
+    cores: 4
+    image_size: 60Gi
+    tags:
+      - key: AnsibleGroup
+        value: app
+    networks:
+      - default
+      - secondary
+    userdata: |-
+      #cloud-config
+      user: rhel
+      password: ansible123!
+      chpasswd: { expire: False }
+      ssh_pwauth: true
+    services:
+      - name: flask-app
+        ports:
+          - port: 5000
+            protocol: TCP
+            targetPort: 5000
+            name: flask-app
+      - name: gitea-vm
+        ports:
+          - port: 3000
+            protocol: TCP
+            targetPort: 3000
+            name: gitea-vm
+    routes:
+      - name: flask-app
+        host: flask-app
+        service: flask-app
+        targetPort: 5000
+        tls: true
+        tls_termination: Edge
+      - name: gitea-vm
+        host: gitea-vm
+        service: gitea-vm
+        targetPort: 3000
+        tls: true
+        tls_termination: Edge
+
+  # Note: AAP Controller is assumed to be shared infrastructure
+  # If per-lab AAP is needed, uncomment and configure:
+  # - name: control
+  #   image: aap-2.7-controller
+  #   memory: 32G
+  #   cores: 8
+  #   image_size: 80Gi
+  #   networks:
+  #     - default
+  #     - secondary
+  #   services:
+  #     - name: aap-https
+  #       ports:
+  #         - port: 443
+  #           protocol: TCP
+  #           targetPort: 443
+  #           name: aap-https

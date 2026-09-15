@@ -1,0 +1,72 @@
+---
+# Configure AAP Controller
+# Creates job templates, credentials, inventories for the lab
+
+- name: Wait for AAP Controller to be ready
+  ansible.builtin.uri:
+    url: "{{ aap_controller_url | default('https://aap-controller.example.com') }}/api/v2/ping/"
+    validate_certs: false
+    status_code: 200
+  register: aap_ping
+  until: aap_ping is success
+  retries: 30
+  delay: 10
+  tags: aap
+
+- name: Create AAP credential for Gitea
+  ansible.controller.credential:
+    name: Gitea Lab Credential
+    description: SSH credential for Gitea and app-gitea host
+    organization: Default
+    credential_type: Machine
+    inputs:
+      username: "{{ lab_user }}"
+      password: "{{ lab_password }}"
+      become_password: "{{ lab_password }}"
+    controller_host: "{{ aap_controller_url | default('https://aap-controller.example.com') }}"
+    controller_username: "{{ aap_admin_username }}"
+    controller_password: "{{ aap_admin_password }}"
+    validate_certs: false
+  tags: aap
+
+- name: Create AAP project
+  ansible.controller.project:
+    name: Concert CVE Remediation
+    description: Concert + AAP + Lightwell lab playbooks
+    organization: Default
+    scm_type: git
+    scm_url: http://gitea:3000/labuser/flask-api-app.git
+    scm_branch: main
+    scm_update_on_launch: true
+    controller_host: "{{ aap_controller_url | default('https://aap-controller.example.com') }}"
+    controller_username: "{{ aap_admin_username }}"
+    controller_password: "{{ aap_admin_password }}"
+    validate_certs: false
+  tags: aap
+
+- name: Create lab inventory
+  ansible.controller.inventory:
+    name: Concert Lab Inventory
+    description: Flask app and Gitea hosts
+    organization: Default
+    controller_host: "{{ aap_controller_url | default('https://aap-controller.example.com') }}"
+    controller_username: "{{ aap_admin_username }}"
+    controller_password: "{{ aap_admin_password }}"
+    validate_certs: false
+  tags: aap
+
+- name: Add app-gitea host to inventory
+  ansible.controller.host:
+    name: app-gitea
+    description: Flask application and Gitea server
+    inventory: Concert Lab Inventory
+    variables:
+      ansible_host: app-gitea
+      ansible_user: "{{ lab_user }}"
+    controller_host: "{{ aap_controller_url | default('https://aap-controller.example.com') }}"
+    controller_username: "{{ aap_admin_username }}"
+    controller_password: "{{ aap_admin_password }}"
+    validate_certs: false
+  tags: aap
+
+# Job templates will be created by lab/setup/configure-aap.yml

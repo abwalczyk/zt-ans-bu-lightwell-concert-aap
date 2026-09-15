@@ -1,0 +1,50 @@
+---
+# Fetch Lightwell Remediation Artifact
+# Queries Lightwell for remediated PyYAML version
+
+- name: Fetch Lightwell artifact for CVE remediation
+  hosts: localhost
+  gather_facts: false
+  vars:
+    lightwell_api_url: "{{ lookup('env', 'LIGHTWELL_API_URL') }}"
+    lightwell_api_token: "{{ lookup('env', 'LIGHTWELL_API_TOKEN') }}"
+    cve_id: "{{ cve_id | default('CVE-2026-52891') }}"
+    package_name: "{{ affected_dependency | default('pyyaml') }}"
+
+  tasks:
+    - name: Query Lightwell for CVE remediation
+      ansible.builtin.uri:
+        url: "{{ lightwell_api_url }}/api/v1/remediation"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ lightwell_api_token }}"
+        body_format: json
+        body:
+          cve_id: "{{ cve_id }}"
+          package: "{{ package_name }}"
+        status_code: 200
+      register: lightwell_response
+
+    - name: Extract remediation details
+      ansible.builtin.set_fact:
+        lightwell_artifact: "{{ lightwell_response.json.artifact_name }}"
+        fixed_version: "{{ lightwell_response.json.fixed_version }}"
+        artifact_url: "{{ lightwell_response.json.download_url }}"
+        artifact_checksum: "{{ lightwell_response.json.checksum }}"
+
+    - name: Display Lightwell artifact information
+      ansible.builtin.debug:
+        msg:
+          - "CVE ID: {{ cve_id }}"
+          - "Package: {{ package_name }}"
+          - "Fixed Version: {{ fixed_version }}"
+          - "Lightwell Artifact: {{ lightwell_artifact }}"
+          - "Download URL: {{ artifact_url }}"
+
+    - name: Set stats for AAP workflow
+      ansible.builtin.set_stats:
+        data:
+          lightwell_artifact: "{{ lightwell_artifact }}"
+          fixed_version: "{{ fixed_version }}"
+          artifact_url: "{{ artifact_url }}"
+          artifact_checksum: "{{ artifact_checksum }}"

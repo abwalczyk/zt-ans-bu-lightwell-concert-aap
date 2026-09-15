@@ -1,0 +1,20 @@
+site:
+  title: Concert + AAP + Lightwell CVE Remediation Lab (Dev Mode)
+  start_page: zt-ans-bu-lightwell-concert-aap::index.adoc
+
+content:
+  sources:
+    - url: ./
+      branches: HEAD
+      start_path: content
+
+ui:
+  bundle:
+    url: https://github.com/redhat-scholars/course-ui/releases/download/v0.1.9/ui-bundle.zip
+    snapshot: true
+
+asciidoc:
+  attributes:
+    page-pagination: ''
+  extensions:
+    - ./content/lib/dev-mode.js

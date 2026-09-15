@@ -1,0 +1,28 @@
+site:
+  title: Concert + AAP + Lightwell CVE Remediation Lab
+  start_page: zt-ans-bu-lightwell-concert-aap::index.adoc
+  url: https://showroom.red.ht
+
+content:
+  sources:
+    - url: ./
+      branches: HEAD
+      start_path: content
+
+ui:
+  bundle:
+    url: https://github.com/redhat-scholars/course-ui/releases/download/v0.1.9/ui-bundle.zip
+    snapshot: true
+
+asciidoc:
+  attributes:
+    page-pagination: ''
+  extensions:
+    - ./content/lib/attributes-page-extension.js
+    - ./content/lib/all-attributes-console-extension.js
+    - ./content/lib/dev-mode.js
+    - ./content/lib/unlisted-pages-extension.js
+
+runtime:
+  fetch: true
+  cache_dir: ./.cache/antora
