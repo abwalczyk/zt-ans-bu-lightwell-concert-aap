@@ -7,16 +7,16 @@ lab:
   maintainer: "Red Hat TMM (placeholder@redhat.com)"
 
   description:
-    summary: "AI-driven CVE remediation with IBM Concert, Ansible Automation Platform, and Red Hat Lightwell"
-    goal: "Demonstrate Concert-driven CVE discovery and triage, AAP orchestration of remediation, and Lightwell patching through Gitea CI/CD"
+    summary: "AI-driven CVE remediation with IBM Concert intelligence, Ansible Automation Platform orchestration, and Red Hat Lightwell"
+    goal: "Demonstrate EDA-triggered CVE remediation orchestrated by Automation Orchestrator, with Concert as an intelligence source for SBOM correlation and risk assessment"
     concepts:
-     - "IBM Concert CVE correlation"
-     - "Concert Workflows and automation rules"
-     - "Ansible Automation Platform orchestration"
+     - "Event-Driven Ansible (EDA) for CVE alert ingestion"
+     - "Automation Orchestrator workflow design and execution"
+     - "IBM Concert as intelligence source (SBOM correlation, risk scoring)"
      - "Red Hat Lightwell remediated dependencies"
      - "Gitea CI/CD pipeline integration"
-     - "CVE lifecycle automation"
-    use_case: "End-to-end automated CVE remediation from discovery to validation"
+     - "End-to-end CVE remediation with audit trail"
+    use_case: "Event-driven automated CVE remediation from alert to validation with Concert intelligence"
     time_to_complete: "90"
 
   git_ref:

@@ -1,0 +1,60 @@
+---
+# Query Concert API for SBOM correlation
+# Finds which applications are affected by a given CVE
+#
+# Required extra vars:
+#   cve_id: CVE identifier (e.g., CVE-2026-52891)
+#
+# Returns (via set_stats):
+#   concert_sbom_matched: boolean (whether CVE matched any applications)
+#   concert_affected_apps: list of affected applications
+#   concert_package: package name
+#   concert_current_version: current package version
+#   concert_fixed_version: fixed package version
+
+- name: Query Concert for SBOM Correlation
+  hosts: localhost
+  gather_facts: false
+  vars:
+    concert_url: "{{ lookup('env', 'CONCERT_URL') | default('https://concert.example.com') }}"
+    concert_api_key: "{{ lookup('env', 'CONCERT_API_KEY') }}"
+    cve_id: "{{ cve_id }}"
+
+  tasks:
+    - name: Query Concert API for affected applications
+      ansible.builtin.uri:
+        url: "{{ concert_url }}/api/v1/vulnerabilities/{{ cve_id }}/affected-applications"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ concert_api_key }}"
+          Content-Type: "application/json"
+        validate_certs: false
+        status_code: 200
+      register: concert_sbom_response
+
+    - name: Parse Concert SBOM response
+      ansible.builtin.set_fact:
+        sbom_data: "{{ concert_sbom_response.json }}"
+
+    - name: Set workflow stats for SBOM correlation
+      ansible.builtin.set_stats:
+        data:
+          concert_sbom_matched: "{{ sbom_data.sbom_matched | default(false) }}"
+          concert_affected_apps: "{{ sbom_data.affected_applications | default([]) }}"
+          concert_package: "{{ sbom_data.affected_applications[0].package | default('') }}"
+          concert_current_version: "{{ sbom_data.affected_applications[0].current_version | default('') }}"
+          concert_fixed_version: "{{ sbom_data.affected_applications[0].fixed_version | default('') }}"
+
+    - name: Display SBOM correlation results
+      ansible.builtin.debug:
+        msg: |
+          Concert SBOM Correlation Results:
+          CVE ID: {{ cve_id }}
+          SBOM Matched: {{ sbom_data.sbom_matched | default(false) }}
+          Affected Applications: {{ sbom_data.affected_applications | default([]) | length }}
+          {% if sbom_data.affected_applications | default([]) | length > 0 %}
+          Primary Application: {{ sbom_data.affected_applications[0].name }}
+          Package: {{ sbom_data.affected_applications[0].package }}
+          Current Version: {{ sbom_data.affected_applications[0].current_version }}
+          Fixed Version: {{ sbom_data.affected_applications[0].fixed_version }}
+          {% endif %}

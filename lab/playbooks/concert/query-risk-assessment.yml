@@ -1,0 +1,72 @@
+---
+# Query Concert API for risk assessment
+# Gets IBM Risk Score, priority, and remediation recommendation
+#
+# Required extra vars:
+#   cve_id: CVE identifier (e.g., CVE-2026-52891)
+#   application: Application name (e.g., flask-api-app)
+#
+# Returns (via set_stats):
+#   concert_risk_score: IBM Risk Score (0-100)
+#   concert_cvss_score: CVSS score
+#   concert_severity: Severity level (critical, high, medium, low)
+#   concert_priority: Priority (urgent, high, medium, low)
+#   concert_remediation_available: boolean
+#   concert_recommended_action: Recommended action (auto-remediate, manual, defer)
+
+- name: Query Concert for Risk Assessment
+  hosts: localhost
+  gather_facts: false
+  vars:
+    concert_url: "{{ lookup('env', 'CONCERT_URL') | default('https://concert.example.com') }}"
+    concert_api_key: "{{ lookup('env', 'CONCERT_API_KEY') }}"
+    cve_id: "{{ cve_id }}"
+    application: "{{ application | default('flask-api-app') }}"
+
+  tasks:
+    - name: Query Concert API for risk assessment
+      ansible.builtin.uri:
+        url: "{{ concert_url }}/api/v1/risk-assessment"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ concert_api_key }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          cve: "{{ cve_id }}"
+          application: "{{ application }}"
+        validate_certs: false
+        status_code: 200
+      register: concert_risk_response
+
+    - name: Parse Concert risk assessment response
+      ansible.builtin.set_fact:
+        risk_data: "{{ concert_risk_response.json }}"
+
+    - name: Set workflow stats for risk assessment
+      ansible.builtin.set_stats:
+        data:
+          concert_risk_score: "{{ risk_data.ibm_risk_score | default(0) }}"
+          concert_cvss_score: "{{ risk_data.cvss_score | default(0) }}"
+          concert_cvss_vector: "{{ risk_data.cvss_vector | default('') }}"
+          concert_severity: "{{ risk_data.severity | default('unknown') }}"
+          concert_priority: "{{ risk_data.priority | default('low') }}"
+          concert_exploitability: "{{ risk_data.exploitability | default('unknown') }}"
+          concert_business_impact: "{{ risk_data.business_impact | default('unknown') }}"
+          concert_remediation_available: "{{ risk_data.remediation_available | default(false) }}"
+          concert_recommended_action: "{{ risk_data.recommended_action | default('defer') }}"
+
+    - name: Display risk assessment results
+      ansible.builtin.debug:
+        msg: |
+          Concert Risk Assessment Results:
+          CVE ID: {{ cve_id }}
+          Application: {{ application }}
+          IBM Risk Score: {{ risk_data.ibm_risk_score | default(0) }}
+          CVSS Score: {{ risk_data.cvss_score | default(0) }}
+          Severity: {{ risk_data.severity | default('unknown') }}
+          Priority: {{ risk_data.priority | default('low') }}
+          Exploitability: {{ risk_data.exploitability | default('unknown') }}
+          Business Impact: {{ risk_data.business_impact | default('unknown') }}
+          Remediation Available: {{ risk_data.remediation_available | default(false) }}
+          Recommended Action: {{ risk_data.recommended_action | default('defer') }}

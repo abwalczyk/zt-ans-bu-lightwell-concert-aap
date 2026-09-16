@@ -1,9 +1,10 @@
 = Concert + AAP + Lightwell CVE Remediation Lab
 :toc: auto
 
-A hands-on workshop demonstrating AI-driven CVE remediation using IBM Concert for
-vulnerability discovery and triage, Ansible Automation Platform for orchestration,
-Red Hat Lightwell for remediated dependencies, and Gitea CI/CD for automated deployment.
+A hands-on workshop demonstrating event-driven CVE remediation using Event-Driven Ansible
+to ingest CVE alerts, Automation Orchestrator to orchestrate the response, IBM Concert
+as an intelligence source for SBOM correlation and risk assessment, Red Hat Lightwell for
+remediated dependencies, and Gitea CI/CD for automated deployment.
 
 == Workshop Modules
 
@@ -11,20 +12,24 @@ Red Hat Lightwell for remediated dependencies, and Gitea CI/CD for automated dep
 |===
 | Module | Focus | Hands-on exercises
 
-| *DISCOVER -- Concert CVE Detection*
-| IBM Concert discovers CVE-2026-52891 (PyYAML deserialization) in a Flask application,
-performs risk scoring and correlation, then triggers automated remediation via Concert Workflows.
-| Configure Concert Automation Rule; review Concert Workflow that calls AAP API; observe CVE triage decision.
+| *TRIAGE -- CVE Detection & Concert Intelligence*
+| Event-Driven Ansible receives CVE-2026-52891 alert (PyYAML deserialization) and triggers
+Automation Orchestrator. Concert is queried for SBOM correlation and risk assessment (IBM Risk Score: 95,
+Priority: URGENT). Switch node routes to auto-remediation path.
+| Trigger CVE webhook; observe EDA rulebook activation; review Concert API responses (SBOM, risk);
+watch Automation Orchestrator switch node decision.
 
-| *ORCHESTRATE -- AAP Remediation Workflow*
-| Ansible Automation Platform receives the Concert payload, orchestrates Lightwell artifact
-retrieval, updates application dependencies in Gitea, triggers CI/CD pipeline, and validates remediation.
-| Execute AAP workflow template; observe Lightwell integration; monitor Gitea pipeline; review audit trail.
+| *ORCHESTRATE -- Automation Orchestrator Remediation*
+| Automation Orchestrator orchestrates the remediation: fetch Lightwell artifact, update dependencies
+in Gitea, monitor CI/CD pipeline, validate remediation, and update Concert status.
+| Execute Automation Orchestrator workflow; observe Lightwell integration; monitor Gitea pipeline;
+review job execution history; examine audit trail.
 
-| *VALIDATE -- Remediation Verification*
-| Verify that the vulnerable PyYAML 5.4.1 has been replaced with Lightwell-remediated 6.0.2,
-application health is confirmed, and the deserialization attack is blocked.
-| Run validation playbooks; test application endpoints; confirm CVE resolved; generate compliance report.
+| *VALIDATE -- Audit Trail Review*
+| Review complete audit trail: EDA webhook receipt, Automation Orchestrator execution history,
+Concert API queries and status updates, Gitea commits and pipeline logs, application health checks.
+| Review Automation Orchestrator execution history; examine Concert CVE dashboard (status: RESOLVED);
+generate compliance report with complete audit trail.
 |===
 
 == Architecture
@@ -33,9 +38,10 @@ application health is confirmed, and the deserialization attack is blocked.
 |===
 | Host | Role
 
-| `control`     | AAP Controller 2.7+ (shared across labs)
-| `app-gitea`   | Flask application + Gitea server + Gitea Actions runner
-| `Concert`     | IBM Concert instance (shared, cloud-hosted)
+| `control`     | AAP Controller 2.7+ with Automation Orchestrator and EDA
+| `rhel01`      | Flask application server (vulnerable, then remediated)
+| `gitea`       | Gitea server container with Gitea Actions runner
+| `Concert`     | IBM Concert instance (intelligence source, shared, cloud-hosted)
 | `Lightwell`   | Red Hat Lightwell service (shared)
 |===
 
@@ -67,13 +73,18 @@ zt-ans-bu-lightwell-concert-aap/
 │       └── configure-aap.yml        # AAP job templates, credentials
 ├── lab/                             # Workshop content
 │   ├── playbooks/
-│   │   ├── concert/                 # Concert integration playbooks
+│   │   ├── concert/                 # Concert API query playbooks
+│   │   │   ├── query-sbom-correlation.yml
+│   │   │   ├── query-risk-assessment.yml
+│   │   │   └── update-concert-status.yml
 │   │   ├── aap/                     # AAP remediation playbooks
 │   │   ├── validation/              # Validation and testing playbooks
 │   │   └── tasks/                   # Reusable tasks
+│   ├── extensions/
+│   │   └── eda/                     # Event-Driven Ansible rulebooks
+│   │       └── cve-alert.yml        # CVE webhook ingestion
 │   ├── setup/                       # Lab configuration playbooks
 │   │   ├── configure-aap.yml
-│   │   ├── configure-concert-workflow.yml
 │   │   ├── deploy-flask-app.yml
 │   │   └── vars/workshop.yml
 │   ├── inventory/
@@ -105,17 +116,19 @@ workflow and observe the CVE lifecycle.
 
 * Flask application with PyYAML 5.4.1 (vulnerable to CVE-2026-52891)
 * Gitea server with application repository and CI/CD pipeline
-* AAP job templates for remediation orchestration
-* Concert Workflow configured to call AAP API
-* Concert Automation Rule to trigger on CVE detection
+* EDA rulebook for CVE webhook ingestion
+* Automation Orchestrator workflow with Concert query nodes
+* AAP job templates for Concert queries and remediation orchestration
+* Concert configuration for SBOM correlation and risk assessment
 
 === What attendees execute
 
-* Trigger Concert CVE detection (or observe auto-trigger)
-* Monitor Concert Workflow execution
-* Observe AAP remediation orchestration
+* Trigger CVE alert via EDA webhook
+* Observe EDA rulebook activation and Automation Orchestrator trigger
+* Review Concert SBOM correlation and risk assessment results
+* Monitor Automation Orchestrator workflow execution
 * Watch Gitea CI/CD pipeline build and deploy
-* Validate remediation success
+* Review complete audit trail (EDA → AO → Concert → Gitea → App)
 
 == Prerequisites
 
@@ -127,14 +140,17 @@ workflow and observe the CVE lifecycle.
 
 == Lab Flow
 
-1. **Concert Discovery**: Concert ingests SBOM, detects CVE-2026-52891 in PyYAML 5.4.1
-2. **Concert Triage**: CVSS 9.8 (Critical), remediation available (Lightwell), priority: URGENT
-3. **Concert Trigger**: Automation Rule triggers Concert Workflow
-4. **Concert → AAP**: HTTP Request block POSTs to AAP job template launch endpoint
-5. **AAP Orchestration**: Fetch Lightwell artifact, update requirements.txt, commit to Gitea
-6. **Gitea CI/CD**: Pipeline builds with PyYAML 6.0.2, runs tests, deploys application
-7. **AAP Validation**: Verify dependency version, test application health, confirm CVE resolved
-8. **Audit Trail**: Complete workflow history across Concert, AAP, Gitea
+1. **EDA Alert Ingestion**: CVE-2026-52891 alert received via webhook
+2. **EDA Trigger**: EDA rulebook triggers Automation Orchestrator workflow
+3. **Concert SBOM Query**: AO queries Concert API for affected applications (flask-api-app, pyyaml 5.4.1)
+4. **Concert Risk Assessment**: AO queries Concert for risk score (IBM: 95, CVSS: 9.8, Priority: URGENT)
+5. **AO Routing Decision**: Switch node routes to auto-remediation path
+6. **Lightwell Artifact**: AO job template fetches Lightwell-remediated PyYAML 6.0.2
+7. **Gitea Update**: AO job template updates requirements.txt, commits, pushes to Gitea
+8. **Gitea CI/CD**: Pipeline builds with PyYAML 6.0.2, runs tests, deploys application
+9. **AO Validation**: Job template verifies dependency version, tests application health
+10. **Concert Status Update**: AO job template updates Concert CVE status to RESOLVED
+11. **Audit Trail**: Complete workflow history across EDA, AO, Concert, Gitea, application
 
 == License
 
