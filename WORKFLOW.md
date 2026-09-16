@@ -2,9 +2,10 @@
 
 ## Architecture Overview
 
-**Concert** = Intelligence/Data Source (SBOM correlation, risk assessment, priority)  
-**Automation Orchestrator** = Primary Orchestrator (workflow execution, decision making)  
-**AAP** = Execution Engine (playbook runs, Lightwell integration, Gitea updates)
+**Concert** = SBOM Inventory + Dependency Topology (which apps are affected, what are the dependencies)  
+**Automation Orchestrator** = Primary Orchestrator (workflow execution, decision making, risk assessment)  
+**AAP** = Execution Engine (playbook runs, Lightwell integration, Gitea updates)  
+**EDA** = Event Monitoring (CVE alert ingestion, workflow triggering)
 
 ---
 
@@ -29,52 +30,59 @@
    - Workflow: "CVE Remediation Orchestrator"
    - Extra vars: `{ "cve_id": "CVE-2026-52891", "source": "security-scanner" }`
 
-**3. AO Task Agent: Query Concert for SBOM Correlation**
-   - Agent prompt: "Query Concert API to find which applications are affected by CVE-2026-52891"
-   - Concert API call: `GET /api/v1/vulnerabilities/CVE-2026-52891/affected-applications`
-   - Concert response:
+**3. AO Job Template: Query Concert SBOM Inventory**
+   - Playbook: `lab/playbooks/concert/query-sbom-inventory.yml`
+   - Concert API call: `GET /api/v1/inventory/vulnerabilities/CVE-2026-52891`
+   - Concert response (from pre-indexed SBOM database):
      ```json
      {
        "cve_id": "CVE-2026-52891",
+       "total_affected_applications": 12,
        "affected_applications": [
          {
            "name": "flask-api-app",
+           "version": "v1.0.0",
            "package": "pyyaml",
            "current_version": "5.4.1",
-           "fixed_version": "6.0.2"
-         }
-       ],
-       "sbom_matched": true
+           "repository": "labuser/flask-api-app",
+           "owner_team": "platform-team"
+         },
+         { "name": "payment-service", "package": "pyyaml", "current_version": "5.4.1" },
+         { "name": "other-app-1", "package": "pyyaml", "current_version": "5.4.1" }
+       ]
      }
      ```
+   - **Concert's Value**: Already has all application SBOMs indexed (instant query vs. scanning 500 repos)
 
-**4. AO Task Agent: Query Concert for Risk Assessment**
-   - Agent prompt: "Get Concert risk assessment for CVE-2026-52891 affecting flask-api-app"
-   - Concert API call: `GET /api/v1/risk-assessment?cve=CVE-2026-52891&app=flask-api-app`
-   - Concert response:
+**4. AO Job Template: Query Concert Arena View (Topology)**
+   - Playbook: `lab/playbooks/concert/query-topology.yml`
+   - Concert API call: `GET /api/v1/arena/applications/flask-api-app/topology`
+   - Concert response (from Arena View):
      ```json
      {
-       "cve_id": "CVE-2026-52891",
        "application": "flask-api-app",
-       "ibm_risk_score": 95,
-       "cvss_score": 9.8,
-       "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
-       "severity": "critical",
-       "priority": "urgent",
-       "exploitability": "high",
-       "business_impact": "high",
-       "remediation_available": true,
-       "recommended_action": "auto-remediate"
+       "repository": "labuser/flask-api-app",
+       "build_artifacts": [
+         { "type": "container", "image": "flask-api-app:v1.0.0" }
+       ],
+       "deployments": [
+         { "environment": "production", "namespace": "prod", "replicas": 3 },
+         { "environment": "staging", "namespace": "staging", "replicas": 1 }
+       ],
+       "downstream_dependencies": [
+         { "name": "api-gateway", "owner_team": "network-team" }
+       ]
      }
      ```
+   - **Concert's Value**: Cross-application topology mapping (shows what breaks if you patch this)
 
 **5. AO Switch Node: Routing Decision**
-   - Based on Concert's risk score and remediation availability
+   - **AO's logic** (not Concert's) based on Concert's inventory data + app metadata
    - Switch conditions:
-     - **risk_score >= 90 AND remediation_available** → Auto-remediate (our path)
-     - **risk_score >= 90 AND NOT remediation_available** → Create ServiceNow incident
-     - **risk_score < 90** → Queue for scheduled patching
-   - Decision: **Auto-remediate** ✓
+     - **Environment = production AND CVSS >= 9.0** → Auto-remediate (our path)
+     - **Environment = staging** → Queue for scheduled patching
+     - **Has downstream_dependencies** → Create approval request
+   - Decision for flask-api-app: **Auto-remediate** ✓ (production deployment, CVSS 9.8)
 
 ---
 
@@ -134,21 +142,20 @@
      - Test YAML parsing: `curl /api/parse-yaml` → Safe ✓
    - Validation result: **PASSED**
 
-**11. AO Task Agent: Report to Concert (Optional)**
-   - Agent prompt: "Update Concert to mark CVE-2026-52891 as RESOLVED for flask-api-app"
-   - Concert API call: `PATCH /api/v1/vulnerabilities/CVE-2026-52891`
-   - Body:
+**11. AO Job Template: Update Concert Inventory**
+   - Playbook: `lab/playbooks/concert/update-inventory.yml`
+   - Concert API call: `PATCH /api/v1/inventory/applications/flask-api-app`
+   - Body (update SBOM with new PyYAML version):
      ```json
      {
-       "application": "flask-api-app",
-       "status": "resolved",
-       "remediation_method": "lightwell_artifact",
-       "deployed_version": "6.0.2",
-       "validation_passed": true,
+       "package": "pyyaml",
+       "previous_version": "5.4.1",
+       "new_version": "6.0.2",
        "remediation_timestamp": "2026-09-16T14:23:45Z",
-       "ao_workflow_id": "workflow-123"
+       "validation_passed": true
      }
      ```
+   - **Result**: Concert's SBOM inventory updated, CVE-2026-52891 no longer shows flask-api-app as affected
 
 ---
 
@@ -196,38 +203,37 @@
 └─────────────────────────────────────────────────────────────────┘
            ↓
   ┌────────────────────────┐
-  │  Task Agent 1          │ → Query Concert API
-  │  "SBOM Correlation"    │    GET /api/v1/.../affected-apps
+  │  Job Template 1        │ → Query Concert Inventory
+  │  "SBOM Query"          │    GET /api/v1/inventory/vulnerabilities/CVE-2026-52891
   └────────┬───────────────┘
            │
            ↓
   ┌─────────────────────────────────────────────────────┐
-  │              CONCERT (Intelligence Source)          │
-  │  - SBOM correlation                                 │
-  │  - Returns: affected apps, packages, versions       │
+  │              CONCERT (SBOM Inventory)               │
+  │  - Pre-indexed SBOM database                        │
+  │  - Returns: 12 affected apps (from 500+ total)      │
   └────────┬────────────────────────────────────────────┘
            │
-           │ Response: { "affected_applications": ["flask-api-app"] }
+           │ Response: { "affected_applications": [{"name": "flask-api-app", ...}, ...] }
            ↓
   ┌────────────────────────┐
-  │  Task Agent 2          │ → Query Concert API
-  │  "Risk Assessment"     │    GET /api/v1/risk-assessment
+  │  Job Template 2        │ → Query Concert Arena View
+  │  "Topology Query"      │    GET /api/v1/arena/applications/flask-api-app
   └────────┬───────────────┘
            │
            ↓
   ┌─────────────────────────────────────────────────────┐
-  │              CONCERT (Intelligence Source)          │
-  │  - Risk scoring (IBM: 95, CVSS: 9.8)               │
-  │  - Priority determination (URGENT)                  │
-  │  - Remediation availability (TRUE)                  │
+  │              CONCERT (Topology Mapping)             │
+  │  - Shows deployments (prod, staging)                │
+  │  - Shows downstream dependencies                    │
   └────────┬────────────────────────────────────────────┘
            │
-           │ Response: { "ibm_risk_score": 95, "priority": "urgent" }
+           │ Response: { "deployments": [...], "downstream_dependencies": [...] }
            ↓
   ┌────────────────────────┐
   │   Switch Node          │
-  │  Route Decision        │
-  │  Critical + Fix → Auto │
+  │  AO Route Decision     │
+  │  Prod + CVSS9 → Auto   │
   └────────┬───────────────┘
            ↓
 ┌─────────────────────────────────────────────────────────────────┐
@@ -276,14 +282,14 @@
            │ Validation: PASSED
            ↓
   ┌────────────────────────┐
-  │  Task Agent 3          │ → PATCH Concert API
-  │  Report to Concert     │    Update CVE status → RESOLVED
+  │  Job Template 4        │ → PATCH Concert Inventory
+  │  Update SBOM           │    Update pyyaml: 5.4.1 → 6.0.2
   └────────┬───────────────┘
            ↓
   ┌─────────────────────────────────────────────────────┐
-  │              CONCERT (Status Update)                │
-  │  - CVE-2026-52891: RESOLVED                         │
-  │  - flask-api-app: REMEDIATED                        │
+  │              CONCERT (Inventory Update)             │
+  │  - flask-api-app SBOM updated                       │
+  │  - CVE-2026-52891: 12 → 11 affected apps            │
   └─────────────────────────────────────────────────────┘
 ```
 
@@ -298,22 +304,22 @@
 1. EDA + Concert   →  2. AO Workflow   →   3. Validation
    ├─ EDA webhook        ├─ Lightwell          ├─ Check version
    ├─ Concert SBOM       ├─ Gitea update       ├─ Test app
-   └─ Concert risk       ├─ CI/CD deploy       └─ Report to Concert
-                         └─ Validation
+   ├─ Concert topology   ├─ CI/CD deploy       └─ Update Concert SBOM
+   └─ AO routing         └─ Validation
 ```
 
 ---
 
 ## Module Breakdown (Lab Guide Structure)
 
-### Module 1: TRIAGE — CVE Detection & Concert Intelligence (Steps 1-5)
+### Module 1: TRIAGE — CVE Detection & Concert Inventory (Steps 1-5)
 **Students will:**
 - Trigger CVE alert via EDA webhook
 - Observe EDA rulebook activation
 - Watch AO workflow start
-- Review Concert SBOM correlation results
-- Review Concert risk assessment (IBM Risk Score: 95, Priority: URGENT)
-- Observe AO switch node routing decision
+- Review Concert SBOM inventory results (12 affected apps from entire portfolio)
+- Review Concert Arena View topology (deployments, dependencies)
+- Observe AO switch node routing decision (based on deployment environment + CVSS)
 
 ### Module 2: ORCHESTRATE — AO Remediation Workflow (Steps 6-11)
 **Students will:**
@@ -322,12 +328,13 @@
 - Watch Gitea repository update (commit + push)
 - Monitor Gitea CI/CD pipeline
 - Review AAP validation job results
-- Observe Concert status update
+- Observe Concert inventory SBOM update
 
 ### Module 3: VALIDATE — Audit Trail Review (Steps 12-14)
 **Students will:**
-- Review AO execution history (workflow, agents, jobs)
-- Review Concert CVE dashboard (status: RESOLVED)
+- Review AO execution history (workflow, jobs)
+- Review Concert inventory (CVE-2026-52891: 12 → 11 affected apps)
+- Review Concert Arena View (flask-api-app topology updated)
 - Examine complete audit trail (EDA → AO → Concert → Gitea → App)
 - Generate compliance report
 
@@ -340,8 +347,8 @@
 | T+0s | CVE alert received | EDA |
 | T+2s | EDA rulebook triggers AO | EDA |
 | T+5s | AO workflow starts | AO |
-| T+10s | Concert SBOM query | AO → Concert |
-| T+12s | Concert risk assessment | AO → Concert |
+| T+10s | Concert SBOM inventory query | AO → Concert |
+| T+12s | Concert Arena View topology query | AO → Concert |
 | T+15s | Switch routes to auto-remediate | AO |
 | T+20s | Lightwell query complete | AO → Lightwell |
 | T+35s | Gitea updated | AO → Gitea |
@@ -361,15 +368,16 @@
 |--------|------------------------------|--------------------------|
 | **Trigger** | Concert Automation Rule | EDA Webhook → EDA Rulebook |
 | **Orchestrator** | Concert Workflow | Automation Orchestrator |
-| **Concert Role** | Orchestrates everything | Intelligence/data source only |
-| **Concert Actions** | HTTP Request to AAP, workflow execution | API queries only (SBOM, risk) |
+| **Concert Role** | Orchestrates everything | SBOM inventory + topology mapping only |
+| **Concert Actions** | HTTP Request to AAP, workflow execution | API queries only (inventory, topology) |
 | **AAP Integration** | Concert calls AAP API | AO calls AAP job templates |
-| **Decision Making** | Concert Workflow blocks | AO Switch Node |
-| **Audit Trail** | Concert-centric | AO-centric (Concert is one data point) |
+| **Decision Making** | Concert Workflow blocks | AO Switch Node (using app metadata + CVSS) |
+| **Audit Trail** | Concert-centric | AO-centric (Concert is one data source) |
 
 **Why This Is Better:**
-- ✅ Concert focused on its strength: intelligence & correlation
-- ✅ AO controls entire workflow (better audit trail, approval gates, error handling)
-- ✅ Easier to add non-Concert data sources (Splunk, OPA, etc.)
-- ✅ More flexible routing (multi-path decisions, human approvals)
-- ✅ Concert doesn't need workflow configuration (just API access)
+- ✅ Concert focused on its **unique** strength: pre-indexed SBOM inventory at enterprise scale
+- ✅ Concert Arena View provides cross-application topology (what breaks if you patch this)
+- ✅ AO controls entire workflow (decision logic, approval gates, error handling)
+- ✅ Easier to add non-Concert data sources (Snyk, Trivy, SAST tools)
+- ✅ More flexible routing (multi-path decisions based on environment, team ownership)
+- ✅ Concert doesn't need workflow configuration (just maintains SBOM database)

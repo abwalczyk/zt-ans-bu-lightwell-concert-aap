@@ -1,0 +1,86 @@
+---
+# Query Concert SBOM Inventory
+# Finds which applications are affected by a given CVE across entire portfolio
+#
+# Concert's Unique Value:
+#   - Pre-indexed SBOM database (instant query vs. scanning 500+ repos)
+#   - Enterprise-wide view (all apps, all teams)
+#
+# Required extra vars:
+#   cve_id: CVE identifier (e.g., CVE-2026-52891)
+#
+# Returns (via set_stats):
+#   concert_total_affected: Total number of affected applications in portfolio
+#   concert_affected_apps: List of affected applications
+#   concert_target_app_found: Boolean (whether target app is in affected list)
+#   concert_package: Package name
+#   concert_current_version: Current package version in target app
+
+- name: Query Concert SBOM Inventory
+  hosts: localhost
+  gather_facts: false
+  vars:
+    concert_url: "{{ lookup('env', 'CONCERT_URL') | default('https://concert.example.com') }}"
+    concert_api_key: "{{ lookup('env', 'CONCERT_API_KEY') }}"
+    cve_id: "{{ cve_id }}"
+    target_app: "{{ target_app | default('flask-api-app') }}"
+
+  tasks:
+    - name: Query Concert inventory for CVE-affected applications
+      ansible.builtin.uri:
+        url: "{{ concert_url }}/api/v1/inventory/vulnerabilities/{{ cve_id }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ concert_api_key }}"
+          Content-Type: "application/json"
+        validate_certs: false
+        status_code: 200
+      register: concert_inventory_response
+
+    - name: Parse Concert inventory response
+      ansible.builtin.set_fact:
+        inventory_data: "{{ concert_inventory_response.json }}"
+
+    - name: Find target application in affected list
+      ansible.builtin.set_fact:
+        target_app_data: "{{ inventory_data.affected_applications | selectattr('name', 'equalto', target_app) | first | default({}) }}"
+
+    - name: Set workflow stats for SBOM inventory
+      ansible.builtin.set_stats:
+        data:
+          concert_total_affected: "{{ inventory_data.total_affected_applications | default(0) }}"
+          concert_affected_apps: "{{ inventory_data.affected_applications | default([]) }}"
+          concert_target_app_found: "{{ target_app_data != {} }}"
+          concert_package: "{{ target_app_data.package | default('') }}"
+          concert_current_version: "{{ target_app_data.current_version | default('') }}"
+          concert_owner_team: "{{ target_app_data.owner_team | default('') }}"
+
+    - name: Display Concert SBOM inventory results
+      ansible.builtin.debug:
+        msg: |
+          ==========================================
+          Concert SBOM Inventory Results
+          ==========================================
+          CVE ID: {{ cve_id }}
+
+          PORTFOLIO-WIDE IMPACT:
+          Total Affected Applications: {{ inventory_data.total_affected_applications | default(0) }}
+          (Concert scanned {{ inventory_data.total_applications | default('N/A') }} apps)
+
+          TARGET APPLICATION:
+          Name: {{ target_app }}
+          Found in affected list: {{ 'YES' if target_app_data != {} else 'NO' }}
+          {% if target_app_data != {} %}
+          Package: {{ target_app_data.package }}
+          Current Version: {{ target_app_data.current_version }}
+          Owner Team: {{ target_app_data.owner_team }}
+          Repository: {{ target_app_data.repository }}
+          {% endif %}
+
+          OTHER AFFECTED APPS:
+          {% for app in inventory_data.affected_applications | default([]) %}
+          {% if app.name != target_app %}
+          - {{ app.name }} ({{ app.package }} {{ app.current_version }})
+          {% endif %}
+          {% endfor %}
+          ==========================================

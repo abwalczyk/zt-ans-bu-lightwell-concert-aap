@@ -1,0 +1,88 @@
+---
+# Query Concert Arena View (Topology)
+# Gets application deployment topology and downstream dependencies
+#
+# Concert's Unique Value:
+#   - Cross-application dependency mapping (what breaks if you patch this)
+#   - Enterprise-wide topology (apps owned by different teams)
+#
+# Required extra vars:
+#   application: Application name (e.g., flask-api-app)
+#
+# Returns (via set_stats):
+#   concert_deployments: List of deployment environments
+#   concert_deployment_count: Total number of deployments
+#   concert_has_prod_deployment: Boolean (whether app is deployed to production)
+#   concert_downstream_dependencies: List of apps that depend on this one
+#   concert_dependency_count: Number of downstream dependencies
+
+- name: Query Concert Arena View Topology
+  hosts: localhost
+  gather_facts: false
+  vars:
+    concert_url: "{{ lookup('env', 'CONCERT_URL') | default('https://concert.example.com') }}"
+    concert_api_key: "{{ lookup('env', 'CONCERT_API_KEY') }}"
+    application: "{{ application | default('flask-api-app') }}"
+
+  tasks:
+    - name: Query Concert Arena View for application topology
+      ansible.builtin.uri:
+        url: "{{ concert_url }}/api/v1/arena/applications/{{ application }}/topology"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ concert_api_key }}"
+          Content-Type: "application/json"
+        validate_certs: false
+        status_code: 200
+      register: concert_topology_response
+
+    - name: Parse Concert topology response
+      ansible.builtin.set_fact:
+        topology_data: "{{ concert_topology_response.json }}"
+
+    - name: Check for production deployment
+      ansible.builtin.set_fact:
+        has_prod: "{{ topology_data.deployments | selectattr('environment', 'equalto', 'production') | list | length > 0 }}"
+
+    - name: Set workflow stats for topology
+      ansible.builtin.set_stats:
+        data:
+          concert_deployments: "{{ topology_data.deployments | default([]) }}"
+          concert_deployment_count: "{{ topology_data.deployments | default([]) | length }}"
+          concert_has_prod_deployment: "{{ has_prod }}"
+          concert_downstream_dependencies: "{{ topology_data.downstream_dependencies | default([]) }}"
+          concert_dependency_count: "{{ topology_data.downstream_dependencies | default([]) | length }}"
+          concert_repository: "{{ topology_data.repository | default('') }}"
+
+    - name: Display Concert topology results
+      ansible.builtin.debug:
+        msg: |
+          ==========================================
+          Concert Arena View Topology
+          ==========================================
+          Application: {{ application }}
+          Repository: {{ topology_data.repository | default('N/A') }}
+
+          BUILD ARTIFACTS:
+          {% for artifact in topology_data.build_artifacts | default([]) %}
+          - Type: {{ artifact.type }}, Image: {{ artifact.image | default('N/A') }}
+          {% endfor %}
+
+          DEPLOYMENTS:
+          Total Deployments: {{ topology_data.deployments | default([]) | length }}
+          {% for deploy in topology_data.deployments | default([]) %}
+          - Environment: {{ deploy.environment }}
+            Namespace: {{ deploy.namespace | default('N/A') }}
+            Replicas: {{ deploy.replicas | default('N/A') }}
+          {% endfor %}
+
+          DOWNSTREAM DEPENDENCIES:
+          Total Dependencies: {{ topology_data.downstream_dependencies | default([]) | length }}
+          {% for dep in topology_data.downstream_dependencies | default([]) %}
+          - {{ dep.name }} (owned by {{ dep.owner_team | default('unknown') }})
+          {% endfor %}
+
+          {% if topology_data.downstream_dependencies | default([]) | length > 0 %}
+          ⚠️  WARNING: Patching this app may affect {{ topology_data.downstream_dependencies | length }} downstream dependencies!
+          {% endif %}
+          ==========================================

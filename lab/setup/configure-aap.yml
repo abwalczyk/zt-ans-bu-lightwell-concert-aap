@@ -86,37 +86,37 @@
           - "{{ app_server_host }}"
         state: present
 
-    # ── Job Templates - Concert Intelligence Queries ───────────────────
-    - name: Create job template - Concert SBOM Correlation
+    # ── Job Templates - Concert Inventory & Topology Queries ───────────
+    - name: Create job template - Concert SBOM Inventory
       ansible.controller.job_template:
-        name: "Concert - Query SBOM Correlation"
+        name: "Concert - Query SBOM Inventory"
         organization: "{{ workshop_org }}"
         job_type: run
         inventory: "{{ workshop_inventory_name }}"
         project: "{{ workshop_project_name }}"
-        playbook: lab/playbooks/concert/query-sbom-correlation.yml
+        playbook: lab/playbooks/concert/query-sbom-inventory.yml
         credentials:
           - "{{ workshop_credential_name }}"
         execution_environment: "{{ workshop_ee_name }}"
         ask_variables_on_launch: true
         extra_vars:
           cve_id: "{{ target_cve }}"
+          target_app: "{{ target_app }}"
         state: present
 
-    - name: Create job template - Concert Risk Assessment
+    - name: Create job template - Concert Arena View Topology
       ansible.controller.job_template:
-        name: "Concert - Query Risk Assessment"
+        name: "Concert - Query Topology"
         organization: "{{ workshop_org }}"
         job_type: run
         inventory: "{{ workshop_inventory_name }}"
         project: "{{ workshop_project_name }}"
-        playbook: lab/playbooks/concert/query-risk-assessment.yml
+        playbook: lab/playbooks/concert/query-topology.yml
         credentials:
           - "{{ workshop_credential_name }}"
         execution_environment: "{{ workshop_ee_name }}"
         ask_variables_on_launch: true
         extra_vars:
-          cve_id: "{{ target_cve }}"
           application: "{{ target_app }}"
         state: present
 
@@ -172,27 +172,29 @@
           expected_version: "{{ fixed_version }}"
         state: present
 
-    # ── Job Templates - Concert Status Update ──────────────────────────
-    - name: Create job template - Update Concert Status
+    # ── Job Templates - Concert Inventory Update ───────────────────────
+    - name: Create job template - Update Concert Inventory
       ansible.controller.job_template:
-        name: "Concert - Update CVE Status"
+        name: "Concert - Update Inventory"
         organization: "{{ workshop_org }}"
         job_type: run
         inventory: "{{ workshop_inventory_name }}"
         project: "{{ workshop_project_name }}"
-        playbook: lab/playbooks/concert/update-concert-status.yml
+        playbook: lab/playbooks/concert/update-inventory.yml
         credentials:
           - "{{ workshop_credential_name }}"
         execution_environment: "{{ workshop_ee_name }}"
         ask_variables_on_launch: true
         extra_vars:
-          cve_id: "{{ target_cve }}"
           application: "{{ target_app }}"
+          package: "{{ vulnerable_package }}"
+          previous_version: "{{ vulnerable_version }}"
+          new_version: "{{ fixed_version }}"
         state: present
 
     # ── Automation Orchestrator Workflow ───────────────────────────────
     # Note: This workflow is triggered by EDA (Event-Driven Ansible)
-    # Concert is queried as an intelligence source, not an orchestrator
+    # Concert provides SBOM inventory and topology data, AO orchestrates remediation
     - name: Create Concert CVE Remediation workflow
       ansible.controller.workflow_job_template:
         name: "CVE Remediation Orchestrator"
@@ -204,22 +206,22 @@
         state: present
       register: _workflow
 
-    # Phase 1: Intelligence Gathering (Concert queries)
-    - name: Add workflow node - Concert SBOM Correlation
+    # Phase 1: Concert Inventory & Topology Queries
+    - name: Add workflow node - Concert SBOM Inventory
       ansible.controller.workflow_job_template_node:
         workflow_job_template: "CVE Remediation Orchestrator"
         identifier: concert_sbom
-        unified_job_template: "Concert - Query SBOM Correlation"
+        unified_job_template: "Concert - Query SBOM Inventory"
         state: present
       register: _node_sbom
 
-    - name: Add workflow node - Concert Risk Assessment
+    - name: Add workflow node - Concert Arena View Topology
       ansible.controller.workflow_job_template_node:
         workflow_job_template: "CVE Remediation Orchestrator"
-        identifier: concert_risk
-        unified_job_template: "Concert - Query Risk Assessment"
+        identifier: concert_topology
+        unified_job_template: "Concert - Query Topology"
         state: present
-      register: _node_risk
+      register: _node_topology
 
     # Phase 2: Remediation Execution
     - name: Add workflow node - Fetch Lightwell Artifact
@@ -246,30 +248,30 @@
         state: present
       register: _node_validate
 
-    # Phase 3: Status Update
-    - name: Add workflow node - Update Concert Status
+    # Phase 3: Concert Inventory Update
+    - name: Add workflow node - Update Concert Inventory
       ansible.controller.workflow_job_template_node:
         workflow_job_template: "CVE Remediation Orchestrator"
         identifier: update_concert
-        unified_job_template: "Concert - Update CVE Status"
+        unified_job_template: "Concert - Update Inventory"
         state: present
       register: _node_concert_update
 
     # Workflow Links
-    - name: Link SBOM → Risk Assessment
+    - name: Link SBOM → Topology
       ansible.controller.workflow_job_template_node:
         workflow_job_template: "CVE Remediation Orchestrator"
-        identifier: concert_risk
+        identifier: concert_topology
         success_nodes:
           - concert_sbom
         state: present
 
-    - name: Link Risk Assessment → Fetch Lightwell
+    - name: Link Topology → Fetch Lightwell
       ansible.controller.workflow_job_template_node:
         workflow_job_template: "CVE Remediation Orchestrator"
         identifier: fetch_lightwell
         success_nodes:
-          - concert_risk
+          - concert_topology
         state: present
 
     - name: Link Fetch → Update Dependency
@@ -303,4 +305,5 @@
           - "Workflow ID: {{ _workflow.id }}"
           - "Workflow URL: {{ aap_host }}/#/templates/workflow_job_template/{{ _workflow.id }}"
           - "Triggered by: EDA rulebook (lab/extensions/eda/cve-alert.yml)"
-          - "Concert role: Intelligence source (SBOM correlation, risk assessment)"
+          - "Concert role: SBOM inventory database + dependency topology mapping"
+          - "AO role: Orchestration, decision logic, remediation execution"

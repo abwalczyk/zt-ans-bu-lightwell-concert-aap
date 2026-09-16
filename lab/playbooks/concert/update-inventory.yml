@@ -1,0 +1,57 @@
+---
+# Update Concert SBOM Inventory
+# Updates application's SBOM with new package version after remediation
+#
+# Required extra vars:
+#   application: Application name (e.g., flask-api-app)
+#   package: Package name (e.g., pyyaml)
+#   previous_version: Version before remediation
+#   new_version: Version after remediation
+#   validation_passed: Boolean indicating validation success
+
+- name: Update Concert SBOM Inventory
+  hosts: localhost
+  gather_facts: false
+  vars:
+    concert_url: "{{ lookup('env', 'CONCERT_URL') | default('https://concert.example.com') }}"
+    concert_api_key: "{{ lookup('env', 'CONCERT_API_KEY') }}"
+    application: "{{ application }}"
+    package: "{{ package }}"
+    previous_version: "{{ previous_version }}"
+    new_version: "{{ new_version }}"
+    validation_passed: "{{ validation_passed | default(false) }}"
+
+  tasks:
+    - name: Update Concert inventory with new SBOM data
+      ansible.builtin.uri:
+        url: "{{ concert_url }}/api/v1/inventory/applications/{{ application }}/sbom"
+        method: PATCH
+        headers:
+          Authorization: "Bearer {{ concert_api_key }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          package: "{{ package }}"
+          previous_version: "{{ previous_version }}"
+          new_version: "{{ new_version }}"
+          remediation_timestamp: "{{ ansible_date_time.iso8601 }}"
+          validation_passed: "{{ validation_passed }}"
+        validate_certs: false
+        status_code: [200, 204]
+      register: concert_update_response
+
+    - name: Display Concert inventory update results
+      ansible.builtin.debug:
+        msg: |
+          ==========================================
+          Concert Inventory Updated
+          ==========================================
+          Application: {{ application }}
+          Package: {{ package }}
+          Version Change: {{ previous_version }} → {{ new_version }}
+          Validation: {{ 'PASSED ✓' if validation_passed else 'FAILED ✗' }}
+          Timestamp: {{ ansible_date_time.iso8601 }}
+
+          Concert's SBOM inventory for {{ application }} has been updated.
+          CVE queries will now reflect the new package version.
+          ==========================================
