@@ -2,6 +2,19 @@
 # Concert + AAP + Lightwell Lab Setup
 # Provisions and configures all lab infrastructure
 
+# Phase 0: Install required collections
+- name: Install Ansible collections
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  tasks:
+    - name: Install collections from requirements
+      ansible.builtin.command:
+        cmd: ansible-galaxy collection install -r collections/requirements.yml
+        chdir: "{{ playbook_dir }}"
+      register: _collections
+      changed_when: "'Nothing to do' not in _collections.stdout"
+
 # Phase 1: Build dynamic inventory
 - name: Create inventory
   hosts: localhost
@@ -9,17 +22,32 @@
   vars_files:
     - ../config/secrets.yaml
   tasks:
-    - name: Add app-gitea host
+    - name: Add control host
       ansible.builtin.add_host:
-        name: app-gitea
-        ansible_ssh_host: app-gitea
+        name: control
+        ansible_ssh_host: control
+        ansible_ssh_port: "{{ lookup('ansible.builtin.env', 'BASTION_PORT') }}"
+        ansible_ssh_user: "{{ lookup('ansible.builtin.env', 'BASTION_USER') | default('rhel', true) }}"
+        ansible_ssh_pass: "{{ lookup('ansible.builtin.env', 'BASTION_PASSWORD') | default('ansible123!', true) }}"
+        ansible_become_password: "{{ lookup('ansible.builtin.env', 'BASTION_PASSWORD') | default('ansible123!', true) }}"
+        ansible_python_interpreter: /usr/libexec/platform-python
+        net_interface: eth1
+        net_address: 192.168.1.10/24
+        net_dns: ""
+        net_dns_search: ""
+        selinux_mode: permissive
+
+    - name: Add rhel01 host (app server)
+      ansible.builtin.add_host:
+        name: rhel01
+        ansible_ssh_host: rhel01
         ansible_ssh_port: "{{ lookup('ansible.builtin.env', 'BASTION_PORT') }}"
         ansible_ssh_user: "{{ lookup('ansible.builtin.env', 'BASTION_USER') | default('rhel', true) }}"
         ansible_ssh_pass: "{{ lookup('ansible.builtin.env', 'BASTION_PASSWORD') | default('ansible123!', true) }}"
         ansible_become_password: "{{ lookup('ansible.builtin.env', 'BASTION_PASSWORD') | default('ansible123!', true) }}"
         ansible_python_interpreter: /usr/bin/python3
         net_interface: eth1
-        net_address: 192.168.1.10/24
+        net_address: 192.168.1.13/24
         net_dns: ""
         net_dns_search: ""
         selinux_mode: permissive
@@ -37,34 +65,46 @@
     hosts_entries:
       - ip: 192.168.1.10
         names:
-          - app-gitea
-          - flask-app
-          - gitea
+          - control
+          - aap.example.org
+      - ip: 192.168.1.13
+        names:
+          - rhel01
+          - app
   tasks:
     - name: Include common bootstrap tasks
       ansible.builtin.import_tasks: tasks/common-bootstrap.yml
 
-# Phase 3: Setup app-gitea host
-- name: Setup app-gitea host
-  hosts: app-gitea
+# Phase 3: Setup rhel01 (app server)
+- name: Setup rhel01 host
+  hosts: rhel01
   gather_facts: true
   become: true
   vars_files:
     - ../config/secrets.yaml
+  vars:
+    lab_user: labuser
+    lab_password: ansible123!
   tasks:
-    - name: Include app-gitea setup tasks
-      ansible.builtin.import_tasks: tasks/setup-app-gitea.yml
+    - name: Include rhel01 setup tasks
+      ansible.builtin.import_tasks: tasks/setup-rhel01.yml
 
-# Phase 4: Configure app-gitea (Flask app + Gitea)
-- name: Configure app-gitea
-  hosts: app-gitea
+# Phase 4: Configure rhel01 (Flask app)
+- name: Configure rhel01
+  hosts: rhel01
   gather_facts: true
   become: true
   vars_files:
     - ../config/secrets.yaml
+  vars:
+    lab_user: labuser
+    lab_password: ansible123!
+    flask_app_dir: /opt/flask-app
+    flask_app_service: flask-app
+    app_port: 5000
   tasks:
-    - name: Include app-gitea configuration tasks
-      ansible.builtin.import_tasks: tasks/configure-app-gitea.yml
+    - name: Include rhel01 configuration tasks
+      ansible.builtin.import_tasks: tasks/configure-rhel01.yml
 
 # Phase 5: Configure AAP Controller
 - name: Configure AAP Controller
