@@ -1,46 +1,75 @@
 ---
-# Common bootstrap tasks for all RHEL hosts
-# Sets up SSH, networking, RHSM, packages
+# Common bootstrap tasks executed on all hosts in parallel.
+# Uses only ansible.builtin.* modules for container compatibility.
+#
+# Required variables (set via add_host in inventory play):
+#   net_interface   - NIC name (e.g. eth1)
+#   net_address     - CIDR address (e.g. 192.168.1.13/24)
+#   hosts_entries   - list of {ip, names} dicts
+#   tmm_org         - subscription-manager org
+#   tmm_id          - subscription-manager activation key
 
-- name: Wait for SSH connectivity
-  ansible.builtin.wait_for_connection:
-    delay: 5
-    timeout: 300
+- name: Check current SELinux mode
+  ansible.builtin.command: getenforce
+  register: r_selinux
+  changed_when: false
 
-- name: Gather facts
-  ansible.builtin.setup:
+- name: Set SELinux to permissive
+  ansible.builtin.command: setenforce 0
+  when:
+    - r_selinux.stdout == 'Enforcing'
+    - selinux_mode | default('permissive') == 'permissive'
+  changed_when: true
 
-- name: Configure static network
-  community.general.nmcli:
-    conn_name: "{{ net_interface }}"
-    ifname: "{{ net_interface }}"
-    type: ethernet
-    ip4: "{{ net_address }}"
-    state: present
-  when: net_interface is defined and net_address is defined
-
-- name: Set hostname entries
+- name: Populate /etc/hosts entries
   ansible.builtin.lineinfile:
     path: /etc/hosts
-    line: "{{ item.ip }} {{ item.names | join(' ') }}"
+    regexp: "^{{ item.ip }} "
+    line: "{{ item.ip }} {{ item.names }}"
     state: present
   loop: "{{ hosts_entries }}"
-  when: hosts_entries is defined
+  loop_control:
+    label: "{{ item.ip }}"
 
-- name: Set SELinux mode
-  ansible.posix.selinux:
-    policy: targeted
-    state: "{{ selinux_mode }}"
-  when: selinux_mode is defined
+- name: Check if nmcli connection exists
+  ansible.builtin.command: "nmcli connection show {{ net_interface }}"
+  register: r_nmcli_check
+  failed_when: false
+  changed_when: false
 
-- name: Register with Red Hat Subscription Manager
-  community.general.redhat_subscription:
-    state: present
-    username: "{{ rhsm_username }}"
-    password: "{{ rhsm_password }}"
-    auto_attach: true
-  when: rhsm_username is defined and rhsm_password is defined
-  ignore_errors: true
+- name: Create nmcli connection if it doesn't exist
+  ansible.builtin.command: >-
+    nmcli connection add
+    type ethernet
+    con-name {{ net_interface }}
+    ifname {{ net_interface }}
+    ipv4.method manual
+    ipv4.addresses {{ net_address }}
+  when: r_nmcli_check.rc != 0
+  changed_when: true
+
+- name: Modify existing nmcli connection
+  ansible.builtin.command: >-
+    nmcli connection modify {{ net_interface }}
+    ipv4.method manual
+    ipv4.addresses {{ net_address }}
+  when: r_nmcli_check.rc == 0
+  changed_when: true
+
+- name: Bring up nmcli connection
+  ansible.builtin.command: "nmcli connection up {{ net_interface }}"
+  changed_when: true
+  failed_when: false
+
+- name: Register with subscription-manager
+  ansible.builtin.command: >-
+    subscription-manager register
+    --org={{ tmm_org }}
+    --activationkey={{ tmm_id }}
+    --force
+  register: r_rhsm
+  changed_when: "'system has been registered' in r_rhsm.stdout"
+  failed_when: false
 
 - name: Install base packages
   ansible.builtin.dnf:
@@ -50,12 +79,4 @@
       - wget
       - curl
       - python3-pip
-      - podman
-      - firewalld
     state: present
-
-- name: Start and enable firewalld
-  ansible.builtin.systemd:
-    name: firewalld
-    state: started
-    enabled: true
