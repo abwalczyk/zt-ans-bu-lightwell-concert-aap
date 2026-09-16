@@ -1,19 +1,9 @@
 ---
 # Concert + AAP + Lightwell Lab Setup
 # Provisions and configures all lab infrastructure
-
-# Phase 0: Install required collections
-- name: Install Ansible collections
-  hosts: localhost
-  gather_facts: false
-  connection: local
-  tasks:
-    - name: Install collections from requirements
-      ansible.builtin.command:
-        cmd: ansible-galaxy collection install -r collections/requirements.yml
-        chdir: "{{ playbook_dir }}"
-      register: _collections
-      changed_when: "'Nothing to do' not in _collections.stdout"
+#
+# NOTE: Collections must be installed before running this playbook:
+#   ansible-galaxy collection install -r ../lab/collections/requirements.yml
 
 # Phase 1: Build dynamic inventory
 - name: Create inventory
@@ -73,7 +63,7 @@
           - app
   tasks:
     - name: Include common bootstrap tasks
-      ansible.builtin.import_tasks: tasks/common-bootstrap.yml
+      ansible.builtin.include_tasks: tasks/common-bootstrap.yml
 
 # Phase 3: Setup rhel01 (app server)
 - name: Setup rhel01 host
@@ -87,7 +77,7 @@
     lab_password: ansible123!
   tasks:
     - name: Include rhel01 setup tasks
-      ansible.builtin.import_tasks: tasks/setup-rhel01.yml
+      ansible.builtin.include_tasks: tasks/setup-rhel01.yml
 
 # Phase 4: Configure rhel01 (Flask app)
 - name: Configure rhel01
@@ -104,7 +94,7 @@
     app_port: 5000
   tasks:
     - name: Include rhel01 configuration tasks
-      ansible.builtin.import_tasks: tasks/configure-rhel01.yml
+      ansible.builtin.include_tasks: tasks/configure-rhel01.yml
 
 # Phase 5: Configure AAP Controller
 - name: Configure AAP Controller
@@ -114,7 +104,7 @@
     - ../config/secrets.yaml
   tasks:
     - name: Include AAP configuration tasks
-      ansible.builtin.import_tasks: tasks/configure-aap.yml
+      ansible.builtin.include_tasks: tasks/configure-aap.yml
       tags: aap
 
 # Phase 6: Configure Concert Workflow (optional)
