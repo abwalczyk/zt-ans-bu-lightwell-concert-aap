@@ -1,0 +1,17 @@
+---
+# Setup control node (AAP Controller)
+# Install repos, packages, collections, clone workshop repo
+
+- name: Clone workshop repository
+  ansible.builtin.git:
+    repo: "{{ workshop_repo_url }}"
+    dest: "{{ workshop_repo_dest }}"
+    version: "{{ workshop_repo_branch }}"
+    force: true
+
+- name: Install Ansible collections from workshop repo
+  ansible.builtin.command:
+    cmd: ansible-galaxy collection install -r lab/collections/requirements.yml
+    chdir: "{{ workshop_repo_dest }}"
+  register: _collections
+  changed_when: "'Nothing to do' not in _collections.stdout"

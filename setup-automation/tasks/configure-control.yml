@@ -1,0 +1,23 @@
+---
+# Configure AAP Controller
+# Wait for AAP, generate OAuth token, run AAP configuration playbooks
+
+- name: Wait for AAP automation controller to be ready
+  ansible.builtin.uri:
+    url: https://localhost/api/v2/ping/
+    validate_certs: false
+    status_code: 200
+  register: _aap_ping
+  until: _aap_ping is success
+  retries: 60
+  delay: 5
+
+- name: Run AAP configuration playbook
+  ansible.builtin.command:
+    cmd: ansible-playbook lab/setup/configure-aap.yml
+    chdir: "{{ workshop_repo_dest }}"
+  environment:
+    GUID: "{{ guid | default('') }}"
+    DOMAIN: "{{ domain | default('') }}"
+  register: _aap_config
+  changed_when: true

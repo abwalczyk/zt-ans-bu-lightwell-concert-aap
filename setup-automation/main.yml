@@ -1,11 +1,5 @@
 ---
-# Concert + AAP + Lightwell Lab Setup
-# Provisions and configures all lab infrastructure
-#
-# NOTE: Collections must be installed before running this playbook:
-#   ansible-galaxy collection install -r ../lab/collections/requirements.yml
-
-# Phase 1: Build dynamic inventory
+# Phase 1: Build dynamic inventory with per-host network variables
 - name: Create inventory
   hosts: localhost
   gather_facts: false
@@ -17,9 +11,9 @@
         name: control
         ansible_ssh_host: control
         ansible_ssh_port: "{{ lookup('ansible.builtin.env', 'BASTION_PORT') }}"
-        ansible_ssh_user: "{{ lookup('ansible.builtin.env', 'BASTION_USER') | default('rhel', true) }}"
-        ansible_ssh_pass: "{{ lookup('ansible.builtin.env', 'BASTION_PASSWORD') | default('ansible123!', true) }}"
-        ansible_become_password: "{{ lookup('ansible.builtin.env', 'BASTION_PASSWORD') | default('ansible123!', true) }}"
+        ansible_ssh_user: "{{ lookup('ansible.builtin.env', 'BASTION_USER') }}"
+        ansible_ssh_pass: "{{ lookup('ansible.builtin.env', 'BASTION_PASSWORD') }}"
+        ansible_become_password: "{{ lookup('ansible.builtin.env', 'BASTION_PASSWORD') }}"
         ansible_python_interpreter: /usr/libexec/platform-python
         net_interface: eth1
         net_address: 192.168.1.10/24
@@ -32,9 +26,9 @@
         name: rhel01
         ansible_ssh_host: rhel01
         ansible_ssh_port: "{{ lookup('ansible.builtin.env', 'BASTION_PORT') }}"
-        ansible_ssh_user: "{{ lookup('ansible.builtin.env', 'BASTION_USER') | default('rhel', true) }}"
-        ansible_ssh_pass: "{{ lookup('ansible.builtin.env', 'BASTION_PASSWORD') | default('ansible123!', true) }}"
-        ansible_become_password: "{{ lookup('ansible.builtin.env', 'BASTION_PASSWORD') | default('ansible123!', true) }}"
+        ansible_ssh_user: "{{ lookup('ansible.builtin.env', 'BASTION_USER') }}"
+        ansible_ssh_pass: "{{ lookup('ansible.builtin.env', 'BASTION_PASSWORD') }}"
+        ansible_become_password: "{{ lookup('ansible.builtin.env', 'BASTION_PASSWORD') }}"
         ansible_python_interpreter: /usr/bin/python3
         net_interface: eth1
         net_address: 192.168.1.13/24
@@ -42,7 +36,7 @@
         net_dns_search: ""
         selinux_mode: permissive
 
-# Phase 2: Common bootstrap on all hosts
+# Phase 2: Common bootstrap on all hosts in parallel
 - name: Common bootstrap
   hosts: all:!localhost
   gather_facts: false
@@ -54,69 +48,71 @@
     tmm_id: "{{ tmm_activation }}"
     hosts_entries:
       - ip: 192.168.1.10
-        names:
-          - control
-          - aap.example.org
+        names: control aap.example.org
       - ip: 192.168.1.13
-        names:
-          - rhel01
-          - app
+        names: rhel01 app
   tasks:
-    - name: Include common bootstrap tasks
+    - name: Wait for SSH
+      ansible.builtin.wait_for_connection:
+
+    - name: Run common bootstrap tasks
       ansible.builtin.include_tasks: tasks/common-bootstrap.yml
 
-# Phase 3: Setup rhel01 (app server)
-- name: Setup rhel01 host
-  hosts: rhel01
-  gather_facts: true
+# Phase 3: Host-specific bootstrap in parallel
+- name: Host-specific bootstrap
+  hosts: control,rhel01
+  gather_facts: false
   become: true
+  any_errors_fatal: true
   vars_files:
     - ../config/secrets.yaml
   vars:
+    guid: "{{ lookup('ansible.builtin.env', 'GUID') }}"
+    domain: "{{ lookup('ansible.builtin.env', 'DOMAIN') }}"
+    workshop_repo_url: "https://github.com/abwalczyk/zt-ans-bu-lightwell-concert-aap.git"
+    workshop_repo_dest: /tmp/concert-lab
+    workshop_repo_branch: main
     lab_user: labuser
     lab_password: ansible123!
   tasks:
-    - name: Include rhel01 setup tasks
-      ansible.builtin.include_tasks: tasks/setup-rhel01.yml
+    - name: Bootstrap control node
+      ansible.builtin.include_tasks: tasks/setup-control.yml
+      when: inventory_hostname == 'control'
 
-# Phase 4: Configure rhel01 (Flask app)
-- name: Configure rhel01
+    - name: Bootstrap rhel01 node
+      ansible.builtin.include_tasks: tasks/setup-rhel01.yml
+      when: inventory_hostname == 'rhel01'
+
+# Phase 4: rhel01 configure (Flask app)
+- name: rhel01 application configuration
   hosts: rhel01
-  gather_facts: true
+  gather_facts: false
   become: true
+  any_errors_fatal: true
   vars_files:
     - ../config/secrets.yaml
   vars:
+    workshop_repo_dest: /tmp/concert-lab
     lab_user: labuser
     lab_password: ansible123!
     flask_app_dir: /opt/flask-app
     flask_app_service: flask-app
     app_port: 5000
   tasks:
-    - name: Include rhel01 configuration tasks
+    - name: Configure Flask application
       ansible.builtin.include_tasks: tasks/configure-rhel01.yml
 
-# Phase 5: Configure AAP Controller
-- name: Configure AAP Controller
-  hosts: localhost
+# Phase 5: Control AAP configuration
+- name: Control AAP configuration
+  hosts: control
   gather_facts: false
+  become: true
   vars_files:
     - ../config/secrets.yaml
+  vars:
+    workshop_repo_dest: /tmp/concert-lab
+    guid: "{{ lookup('ansible.builtin.env', 'GUID') }}"
+    domain: "{{ lookup('ansible.builtin.env', 'DOMAIN') }}"
   tasks:
-    - name: Include AAP configuration tasks
-      ansible.builtin.include_tasks: tasks/configure-aap.yml
-      tags: aap
-
-# Phase 6: Configure Concert Workflow (optional)
-- name: Configure Concert Workflow
-  hosts: localhost
-  gather_facts: false
-  vars_files:
-    - ../config/secrets.yaml
-  tasks:
-    - name: Display Concert configuration instructions
-      ansible.builtin.debug:
-        msg: |
-          Concert Workflow must be configured manually or via Concert API.
-          See lab/setup/configure-concert-workflow.yml for instructions.
-      tags: concert
+    - name: Configure AAP controller
+      ansible.builtin.include_tasks: tasks/configure-control.yml
