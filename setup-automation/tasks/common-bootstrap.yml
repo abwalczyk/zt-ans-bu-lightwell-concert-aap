@@ -61,15 +61,33 @@
   changed_when: true
   failed_when: false
 
-- name: Register with subscription-manager
-  ansible.builtin.command: >-
-    subscription-manager register
-    --org={{ tmm_org }}
-    --activationkey={{ tmm_id }}
-    --force
-  register: r_rhsm
-  changed_when: "'system has been registered' in r_rhsm.stdout"
+- name: Check subscription-manager registration
+  ansible.builtin.command: subscription-manager identity
+  register: r_rhsm_check
   failed_when: false
+  changed_when: false
+
+- name: Register with subscription-manager
+  when:
+    - r_rhsm_check.rc != 0
+    - tmm_org is defined
+    - tmm_org | length > 0
+  block:
+    - name: Clean existing subscription data
+      ansible.builtin.shell: |
+        dnf clean all || true
+        subscription-manager unregister 2>/dev/null || true
+        subscription-manager remove --all 2>/dev/null || true
+        subscription-manager clean
+      changed_when: true
+
+    - name: Register system
+      ansible.builtin.command: >-
+        subscription-manager register
+        --org="{{ tmm_org }}"
+        --activationkey="{{ tmm_id }}"
+        --force
+      changed_when: true
 
 - name: Install base packages
   ansible.builtin.dnf:
@@ -80,3 +98,6 @@
       - curl
       - python3-pip
     state: present
+  register: r_packages
+  failed_when: false
+  # Packages may already be installed or repos may not be needed
