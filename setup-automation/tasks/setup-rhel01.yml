@@ -40,6 +40,12 @@
     - /var/lib/gitea/data
     - /var/lib/gitea/log
 
+- name: Create lab user
+  ansible.builtin.user:
+    name: "{{ lab_user }}"
+    comment: Lab User
+    shell: /bin/bash
+
 - name: Create Flask application directory
   ansible.builtin.file:
     path: /opt/flask-app
