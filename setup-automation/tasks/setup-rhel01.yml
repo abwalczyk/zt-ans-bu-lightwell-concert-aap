@@ -49,11 +49,14 @@
     mode: '0755'
 
 - name: Open firewall ports
-  ansible.posix.firewalld:
-    port: "{{ item }}"
-    permanent: true
-    state: enabled
-    immediate: true
+  ansible.builtin.command: "firewall-cmd --permanent --add-port={{ item }}"
   loop:
     - 5000/tcp   # Flask
     - 3000/tcp   # Gitea
+  changed_when: true
+  failed_when: false
+
+- name: Reload firewall
+  ansible.builtin.command: firewall-cmd --reload
+  changed_when: true
+  failed_when: false
