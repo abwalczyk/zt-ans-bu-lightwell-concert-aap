@@ -93,6 +93,7 @@
     GITEA_WORK_DIR: /var/lib/gitea
   args:
     creates: /var/lib/gitea/data/gitea.db
+  failed_when: false
   tags: gitea
 
 - name: Create Gitea systemd service
