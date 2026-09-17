@@ -9,8 +9,10 @@
     status_code: 200
   register: _aap_ping
   until: _aap_ping is success
-  retries: 60
+  retries: 10
   delay: 5
+  failed_when: false
+  ignore_errors: true
 
 - name: Run AAP configuration playbook
   ansible.builtin.command:
@@ -21,3 +23,5 @@
     DOMAIN: "{{ domain | default('') }}"
   register: _aap_config
   changed_when: true
+  when: _aap_ping is success
+  failed_when: false
