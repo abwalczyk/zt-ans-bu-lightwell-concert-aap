@@ -1,0 +1,55 @@
+= Concert + AAP + Lightwell CVE Remediation Lab
+
+== Lab Overview
+
+Welcome to the Concert + AAP + Lightwell CVE Remediation Lab. In this hands-on workshop, you'll learn how to automate enterprise-scale CVE remediation using IBM Concert for vulnerability intelligence, Ansible Automation Platform for orchestration, and Red Hat Lightwell for trusted remediated packages.
+
+== What You'll Learn
+
+* How Concert identifies affected applications from enterprise-wide SBOM inventory
+* How Concert assesses CVE impact and provides risk intelligence
+* How Automation Orchestrator orchestrates remediation workflows
+* How Lightwell provides verified, remediated packages
+* How to validate successful remediation with complete audit trails
+
+== Lab Scenario
+
+A critical vulnerability (CVE-2026-52891) has been discovered in PyYAML - a Python package used across your application portfolio. Your security scanner has detected this vulnerability and needs immediate remediation.
+
+**Without Concert**: You'd manually scan 500+ applications to find which ones are affected. This takes hours or days.
+
+**With Concert**: Concert's pre-indexed SBOM inventory instantly identifies affected applications. Concert provides risk assessment and priority scoring. Automation Orchestrator executes the remediation automatically.
+
+== Lab Environment
+
+* **control**: Ansible Automation Platform with Automation Orchestrator and Event-Driven Ansible
+* **rhel01**: Flask application server (vulnerable PyYAML 5.4.1 → remediated 6.0.2)
+* **gitea**: Git repository + CI/CD pipeline
+* **Concert**: IBM Concert instance (intelligence source, cloud-hosted)
+* **Lightwell**: Red Hat Lightwell service (remediated packages)
+
+== Lab Modules
+
+This lab consists of 3 modules:
+
+=== xref:module-01-concert-assessment.adoc[Module 1: Concert Vulnerability Assessment]
+
+Trigger a CVE alert and watch Concert identify affected applications and assess impact.
+
+**Estimated time**: 15 minutes
+
+=== xref:module-02-remediation.adoc[Module 2: AAP Remediation Orchestration]
+
+Execute automated remediation using Automation Orchestrator, Lightwell, and Gitea CI/CD.
+
+**Estimated time**: 20 minutes
+
+=== xref:module-03-audit-trail.adoc[Module 3: Audit Trail]
+
+Review the complete audit trail across Concert, Automation Orchestrator, Gitea, and the application.
+
+**Estimated time**: 10 minutes
+
+== Let's Get Started
+
+Click **Next** to begin Module 1: Concert Vulnerability Assessment.

@@ -1,0 +1,294 @@
+= Module 2: AAP Remediation Orchestration
+
+== Module Overview
+
+In this module, you'll watch Automation Orchestrator execute the full remediation workflow: fetching the Lightwell remediated package, updating the Gitea repository, triggering the CI/CD pipeline, and validating the remediation.
+
+**Learning Objectives:**
+
+* See how Automation Orchestrator makes remediation decisions based on Concert data
+* Understand how Lightwell provides remediated dependencies
+* Watch the automated CI/CD pipeline execute (build → test → deploy → restart)
+* Validate successful remediation
+
+**Estimated time**: 20 minutes
+
+== Automation Orchestrator Remediation Decision
+
+The workflow job from Module 1 continues now with the remediation phase.
+
+Navigate back to **Jobs** in Automation Controller and find your running `CVE Remediation Workflow` job.
+
+Watch the next task execute:
+
+[source,text]
+----
+TASK [Make remediation decision based on Concert assessment]
+ok: [localhost] => {
+    "decision": "PROCEED_WITH_LIGHTWELL",
+    "reason": "Concert risk score 95 >= threshold 80, Lightwell solution available"
+}
+----
+
+The workflow checks:
+
+* **Concert risk score >= 80?** → Yes (95)
+* **Lightwell remediated package available?** → Yes (PyYAML 6.0.2)
+* **Decision**: Proceed with automated remediation
+
+If Lightwell didn't have a solution, the workflow would:
+
+* Fall back to Concert Secure Coder for code-based remediation
+* Or escalate to manual review if no automated solution exists
+
+== Step 1: Fetch Lightwell Remediated Package
+
+Watch the workflow query Lightwell:
+
+[source,text]
+----
+TASK [Query Lightwell for remediated package]
+ok: [localhost]
+
+TASK [Display Lightwell recommendation]
+ok: [localhost] => {
+    "lightwell_package": {
+        "package": "PyYAML",
+        "current_version": "5.4.1",
+        "remediated_version": "6.0.2",
+        "cves_fixed": ["CVE-2026-52891"],
+        "repository": "registry.redhat.io/rhel9/lightwell",
+        "hash": "sha256:a1b2c3d4...",
+        "verified": true,
+        "released": "2026-09-15"
+    }
+}
+----
+
+**Red Hat Lightwell** provides:
+
+* **Remediated dependencies**: Packages with CVE fixes applied
+* **Verification**: Cryptographically signed packages with hash verification
+* **Compatibility testing**: Red Hat tested to ensure no breaking changes
+* **Audit trail**: Complete provenance from source to package
+
+This is safer than blindly upgrading to the latest PyPI version, which might:
+
+* Introduce breaking API changes
+* Pull in malicious dependencies
+* Lack enterprise support and verification
+
+== Step 2: Update Gitea Repository
+
+The workflow now updates the `requirements.txt` file in the Gitea repository:
+
+[source,text]
+----
+TASK [Update requirements.txt in Gitea repository]
+changed: [localhost]
+
+TASK [Display Git commit]
+ok: [localhost] => {
+    "git_commit": {
+        "repo": "flask-api",
+        "branch": "main",
+        "commit_sha": "a1b2c3d4e5f6",
+        "message": "fix: upgrade PyYAML 5.4.1 → 6.0.2 (CVE-2026-52891)\n\nRemediates CVE-2026-52891 (CVSS 9.8)\nLightwell package: PyYAML 6.0.2\nConcert risk score: 95\n\nCo-Authored-By: Automation Orchestrator"
+    }
+}
+----
+
+The workflow used Gitea's API to:
+
+1. Clone the repository
+2. Update `requirements.txt`: `PyYAML==5.4.1` → `PyYAML==6.0.2`
+3. Commit the change with detailed audit information
+4. Push to the main branch
+
+== Step 3: Watch Gitea CI/CD Pipeline
+
+The git push triggers the Gitea Actions CI/CD pipeline automatically.
+
+Open a browser and navigate to the Gitea UI:
+
+[source,text]
+----
+URL: http://rhel01.{guid}.{domain}:3000
+Username: labuser
+Password: {password}
+----
+
+Navigate to **Repositories > flask-api > Actions**.
+
+You should see a new workflow run that was triggered by the commit. Click on it to watch the pipeline execute:
+
+**Pipeline Stages**:
+
+[source,text]
+----
+Stage 1: Build
+  ✓ Install dependencies from requirements.txt
+  ✓ Verify PyYAML 6.0.2 installed
+
+Stage 2: Test
+  ✓ Run unit tests
+  ✓ Run integration tests
+  ✓ Security scan (verify CVE-2026-52891 no longer detected)
+
+Stage 3: Deploy
+  ✓ Copy new code to /opt/flask-app/
+  ✓ Install updated dependencies
+
+Stage 4: Restart
+  ✓ Restart flask-app.service
+  ✓ Health check (wait for app to respond)
+----
+
+This entire pipeline runs automatically. No human intervention required.
+
+== Step 4: Monitor Automation Orchestrator Job
+
+Switch back to Automation Controller to watch the workflow monitor the pipeline:
+
+[source,text]
+----
+TASK [Wait for Gitea pipeline to complete]
+ok: [localhost] => (attempt 1/30)
+...
+ok: [localhost] => (attempt 8/30)
+
+TASK [Display pipeline result]
+ok: [localhost] => {
+    "pipeline_status": "success",
+    "duration": "2m 15s",
+    "stages_passed": 4,
+    "stages_failed": 0
+}
+----
+
+The workflow polls the Gitea API every 5 seconds to monitor the pipeline status. Once it completes successfully, the workflow continues.
+
+== Step 5: Validate Remediation
+
+The final workflow task validates that the remediation was successful:
+
+[source,text]
+----
+TASK [Validate remediation - check PyYAML version]
+ok: [rhel01]
+
+TASK [Display validation result]
+ok: [localhost] => {
+    "validation": {
+        "host": "rhel01",
+        "app": "flask-api",
+        "previous_version": "5.4.1",
+        "current_version": "6.0.2",
+        "cve_status": "RESOLVED",
+        "app_status": "healthy",
+        "response_time_ms": 45
+    }
+}
+----
+
+You can also verify this yourself:
+
+[source,bash]
+----
+curl http://rhel01.{guid}.{domain}:5000/version
+----
+
+Expected output:
+[source,json]
+----
+{
+  "app": "flask-api",
+  "pyyaml_version": "6.0.2"
+}
+----
+
+The CVE is now remediated!
+
+== Step 6: Understanding the Complete Workflow
+
+Let's review what Automation Orchestrator did:
+
+[source,text]
+----
+1. EDA Trigger
+   └─> Received CVE alert from scanner
+   └─> Triggered Automation Orchestrator workflow
+
+2. Concert Assessment (Module 1)
+   └─> Queried Concert: "Which apps are affected?"
+   └─> Concert identified: flask-api on rhel01
+   └─> Concert risk score: 95 (Critical)
+
+3. Remediation Decision (Module 2)
+   └─> Risk score >= 80? Yes → Proceed
+   └─> Lightwell solution available? Yes → Use Lightwell
+
+4. Fetch Lightwell Package
+   └─> Query Lightwell API
+   └─> Get remediated PyYAML 6.0.2
+   └─> Verify package hash
+
+5. Update Source Control
+   └─> Update Gitea requirements.txt
+   └─> Commit with audit trail
+   └─> Push to main branch
+
+6. Automated CI/CD
+   └─> Gitea Actions triggered
+   └─> Build → Test → Deploy → Restart
+   └─> All stages passed
+
+7. Validate Remediation
+   └─> Check deployed version
+   └─> Confirm app health
+   └─> CVE status: RESOLVED
+----
+
+**Total time from CVE alert to remediated application**: ~3 minutes
+
+**Without automation**:
+* Security team triages alert: 2-4 hours
+* Development team updates code: 1-2 days
+* QA testing: 1-2 days
+* Change approval process: 1-3 days
+* Deployment scheduling: 1-5 days
+* **Total**: 5-14 days
+
+== Alternative Path: Concert Secure Coder
+
+In this lab, Lightwell had a remediated package available. But what if it didn't?
+
+Automation Orchestrator would use **Concert Secure Coder** instead:
+
+1. **Query Concert Secure Coder API**: "How do I fix CVE-2026-52891?"
+2. **Concert analyzes the code**: Identifies the vulnerable deserialization call
+3. **Concert generates remediation**:
+   - Code changes to use safe PyYAML API
+   - Or refactor to avoid vulnerable code path
+4. **Create Pull Request**: Automation Orchestrator creates PR with Concert's suggested changes
+5. **Human Review**: Developer reviews Concert's code suggestions
+6. **Merge and Deploy**: Once approved, same CI/CD pipeline executes
+
+This gives you **two remediation paths**:
+
+* **Lightwell**: Fully automated, zero code changes (preferred)
+* **Secure Coder**: Semi-automated, code changes reviewed by humans (fallback)
+
+== Module Summary
+
+You've completed Module 2! Here's what happened:
+
+1. **Automation Orchestrator made remediation decision** → Based on Concert risk score
+2. **Fetched Lightwell remediated package** → PyYAML 6.0.2, verified and tested
+3. **Updated Gitea repository** → Changed requirements.txt with audit trail
+4. **Gitea CI/CD pipeline auto-triggered** → Build → Test → Deploy → Restart
+5. **Validated remediation** → Confirmed PyYAML 6.0.2 deployed, app healthy
+
+**Total remediation time**: ~3 minutes from CVE alert to resolution.
+
+Ready to review the complete audit trail? Continue to xref:module-03-audit-trail.adoc[Module 3: Audit Trail].

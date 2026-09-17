@@ -1,0 +1,191 @@
+= Module 1: Concert Vulnerability Assessment
+
+== Module Overview
+
+In this module, you'll trigger a CVE alert from a security scanner and watch how IBM Concert identifies affected applications through its SBOM inventory and assesses the vulnerability's impact.
+
+**Learning Objectives:**
+
+* Understand how Event-Driven Ansible receives CVE alerts
+* See how Concert identifies affected applications from SBOM data
+* Learn how Concert assesses application impact and risk
+
+**Estimated time**: 15 minutes
+
+== The Scanner Overload Problem
+
+Modern security scanners like Mythos, Trivy, and others produce thousands of vulnerability alerts. In a typical enterprise environment:
+
+* **Scanner Output**: 5,000+ vulnerabilities detected across your application portfolio
+* **False Positive Rate**: 99.9% of alerts are duplicates, not-exploitable, or not-applicable
+* **Manual Triage**: Takes security teams days or weeks to identify which vulnerabilities actually matter
+
+**Concert's Solution**: Concert correlates scanner alerts with your enterprise SBOM inventory. Instead of manually checking 5,000 alerts, Concert instantly identifies the 12 vulnerabilities that are actually deployed in running applications.
+
+== Step 1: View the Vulnerable Application
+
+First, let's verify that our Flask application is running with the vulnerable PyYAML version.
+
+[source,bash]
+----
+curl http://rhel01.{guid}.{domain}:5000/version
+----
+
+Expected output:
+[source,json]
+----
+{
+  "app": "flask-api",
+  "pyyaml_version": "5.4.1"
+}
+----
+
+This confirms the application is using PyYAML 5.4.1, which contains CVE-2026-52891 (CVSS 9.8 - Critical).
+
+== Step 2: Trigger CVE Alert via Event-Driven Ansible
+
+Your security scanner (Mythos) has detected CVE-2026-52891 and sends a webhook to Event-Driven Ansible.
+
+Log into the Automation Controller:
+
+[source,text]
+----
+URL: https://control.{guid}.{domain}
+Username: admin
+Password: {password}
+----
+
+Navigate to **Event-Driven Ansible > Activations**.
+
+You should see:
+
+* **Activation Name**: `cve-scanner-webhook`
+* **Status**: Running
+* **Description**: Receives CVE alerts from security scanners
+
+This EDA activation is listening for incoming CVE webhooks on port 5000.
+
+== Step 3: Simulate Scanner Alert
+
+In the real world, your security scanner would send this webhook automatically. For this lab, we'll simulate it:
+
+[source,bash]
+----
+curl -X POST http://control.{guid}.{domain}:5000/webhook \
+  -H "Content-Type: application/json" \
+  -d '{
+    "cve_id": "CVE-2026-52891",
+    "severity": "CRITICAL",
+    "cvss_score": 9.8,
+    "package": "PyYAML",
+    "vulnerable_versions": "< 6.0.0",
+    "scanner": "Mythos",
+    "timestamp": "2026-09-17T10:30:00Z"
+  }'
+----
+
+Expected output:
+[source,json]
+----
+{
+  "status": "received",
+  "message": "CVE alert queued for processing"
+}
+----
+
+== Step 4: Watch Event-Driven Ansible Trigger Automation Orchestrator
+
+Go back to Automation Controller and navigate to **Event-Driven Ansible > Activations > cve-scanner-webhook > History**.
+
+You should see a new event:
+
+* **Event**: CVE-2026-52891 received
+* **Action**: Triggered Job Template `CVE Remediation Workflow`
+* **Timestamp**: Just now
+
+Click on the linked job to see the Automation Orchestrator workflow starting.
+
+== Step 5: Automation Orchestrator Queries Concert
+
+Navigate to **Jobs** and find the `CVE Remediation Workflow` job that was just triggered.
+
+Click into the job and watch the execution. You'll see these tasks executing:
+
+[source,text]
+----
+TASK [Query Concert for affected applications]
+ok: [localhost]
+
+TASK [Display Concert assessment]
+ok: [localhost] => {
+    "concert_assessment": {
+        "cve_id": "CVE-2026-52891",
+        "affected_apps": [
+            {
+                "name": "flask-api",
+                "host": "rhel01",
+                "current_version": "5.4.1",
+                "sbom_id": "flask-api-v1.0.0",
+                "deployment": "production",
+                "risk_score": 95
+            }
+        ],
+        "total_apps_scanned": 487,
+        "affected_count": 1,
+        "concert_recommendation": "REMEDIATE_IMMEDIATELY"
+    }
+}
+----
+
+**Key Concert Capabilities Demonstrated:**
+
+* **SBOM Correlation**: Concert scanned its inventory of 487 applications and identified 1 affected app
+* **Risk Assessment**: Concert calculated a risk score of 95/100 based on:
+  - CVE severity (CVSS 9.8)
+  - Application criticality (production deployment)
+  - Exploitability (publicly known exploit)
+  - Exposure (internet-facing API)
+* **Actionable Intelligence**: Concert recommended immediate remediation
+
+Without Concert, you would need to manually:
+1. Query all 487 applications for their Python dependencies
+2. Check each application's PyYAML version
+3. Assess which deployments are production vs. dev/test
+4. Prioritize based on risk and exposure
+
+Concert did this instantly by querying its pre-indexed SBOM database.
+
+== Step 6: Review Concert Action Center
+
+The workflow job pauses here and displays Concert's assessment. In a real Concert deployment, you could also view this in Concert's Action Center UI:
+
+**Concert Action Center** shows:
+
+* **CVE**: CVE-2026-52891
+* **Affected Applications**: 1 (flask-api)
+* **Risk Score**: 95 (Critical)
+* **Recommended Action**: Remediate immediately
+* **Available Solutions**:
+  - Lightwell remediated package available (PyYAML 6.0.2)
+  - Concert Secure Coder can generate code changes
+
+This is the intelligence that drives the automated remediation in Module 2.
+
+== Module Summary
+
+You've completed Module 1! Here's what happened:
+
+1. **Security scanner detected CVE** → Sent webhook to EDA
+2. **Event-Driven Ansible received alert** → Triggered Automation Orchestrator workflow
+3. **Automation Orchestrator queried Concert** → "Which apps are affected?"
+4. **Concert assessed impact** → Identified 1 app out of 487, risk score 95
+5. **Concert provided actionable intelligence** → Remediate immediately, Lightwell package available
+
+**The Value of Concert**:
+
+* **Speed**: Instant identification of affected apps (seconds vs. hours)
+* **Accuracy**: SBOM-based correlation eliminates false positives
+* **Context**: Risk scoring considers deployment environment and exploitability
+* **Actionability**: Recommendations tied to available remediation paths
+
+Ready to see the automated remediation? Continue to xref:module-02-remediation.adoc[Module 2: AAP Remediation Orchestration].
