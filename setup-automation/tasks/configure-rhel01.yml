@@ -86,7 +86,7 @@
 
 - name: Initialize Gitea database
   ansible.builtin.command:
-    cmd: /usr/local/bin/gitea migrate
+    cmd: /usr/local/bin/gitea migrate --config /etc/gitea/app.ini
   become: true
   become_user: gitea
   environment:
