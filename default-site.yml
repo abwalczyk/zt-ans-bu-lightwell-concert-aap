@@ -1,6 +1,6 @@
 site:
   title: Concert + AAP + Lightwell CVE Remediation Lab (Dev Mode)
-  start_page: zt-ans-bu-lightwell-concert-aap::index.adoc
+  start_page: modules::index.adoc
 
 content:
   sources:

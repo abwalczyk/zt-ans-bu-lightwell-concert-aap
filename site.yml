@@ -1,7 +1,7 @@
 ---
 site:
   title: Concert + AAP + Lightwell CVE Remediation Lab
-  url: https://rhpds.github.io/zt-ans-defend-contain-comply/modules/index.html
+  url: https://rhpds.github.io/zt-ans-bu-lightwell-concert-aap/modules/index.html
   start_page: modules::index.adoc
 
 content:

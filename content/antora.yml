@@ -1,8 +1,19 @@
-name: zt-ans-bu-lightwell-concert-aap
+name: modules
 title: Concert + AAP + Lightwell CVE Remediation
-version: main
+version: master
 nav:
   - modules/ROOT/nav.adoc
 asciidoc:
   attributes:
-    page-pagination: ''
+    lab_name: "Concert + AAP + Lightwell CVE Remediation"
+    release-version: master
+    page-pagination: true
+    guid: my-guid
+    ssh_user: rhel
+    ssh_password: ansible123!
+    ssh_command: ssh rhel@control
+    target_cve: CVE-2026-52891
+    company_name: "Concert Demo Corp"
+    page-links:
+    - url: https://redhat.com
+      text: Red Hat

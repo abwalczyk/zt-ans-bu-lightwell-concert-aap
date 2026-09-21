@@ -1,24 +1,31 @@
 ---
-showroom:
-  description: AI-driven CVE remediation with IBM Concert, Ansible Automation Platform, and Red Hat Lightwell
-  lab_timeout: 7200  # 2 hours in seconds
-  terminal:
-    enabled: true
-    layout: split
-    position: right
-  code_server:
-    enabled: false
-  external_services:
-    - name: AAP Controller
-      description: Ansible Automation Platform Controller
-      url: https://control
-    - name: Concert
-      description: IBM Concert (shared instance)
-      url: "{{ lookup('env', 'CONCERT_URL') }}"
-      external: true
-    - name: Flask App
-      description: Vulnerable Flask Application
-      url: https://flask-app
-    - name: Gitea
-      description: Git Repository and CI/CD
-      url: https://gitea
+antora:
+  name: modules
+  dir: www
+  modules:
+    - name: index
+      label: "Introduction"
+      solveButton: false
+    - name: module-01-concert-assessment
+      label: "Module 1: Concert Vulnerability Assessment"
+      solveButton: false
+    - name: module-02-remediation
+      label: "Module 2: AAP Remediation Orchestration"
+      solveButton: false
+    - name: module-03-audit-trail
+      label: "Module 3: Audit Trail"
+      solveButton: false
+
+tabs:
+  - name: AAP
+    url: https://control-${guid}.${domain}/
+    external: false
+  - name: Flask App
+    url: https://app-${guid}.${domain}/
+    external: true
+  - name: Gitea
+    url: https://gitea-${guid}.${domain}/
+    external: true
+  - name: Concert
+    url: https://44.244.194.122:12443/concert/
+    external: true
