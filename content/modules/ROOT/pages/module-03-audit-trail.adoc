@@ -142,7 +142,7 @@ This provides:
 
 == Step 4: Gitea Source Control History
 
-Open the Gitea UI at `http://rhel01.{guid}.{domain}:3000` and navigate to **Repositories > flask-api > Commits**.
+Click the **Gitea** tab, log in (`labuser` / `ansible123!`), and navigate to **Repositories > flask-api > Commits**.
 
 Find the commit made by Automation Orchestrator:
 
@@ -225,11 +225,11 @@ This proves:
 
 == Step 6: Application Runtime Validation
 
-Finally, verify the running application:
+Finally, verify the running application from the **Flask App** tab (`/version`) or the **Terminal** tab:
 
 [source,bash]
 ----
-curl http://rhel01.{guid}.{domain}:5000/version
+curl http://rhel01:5000/version
 ----
 
 Response:

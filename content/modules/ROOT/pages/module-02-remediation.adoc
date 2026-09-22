@@ -109,16 +109,16 @@ The workflow used Gitea's API to:
 
 The git push triggers the Gitea Actions CI/CD pipeline automatically.
 
-Open a browser and navigate to the Gitea UI:
+. Click the **Gitea** tab in the workshop sidebar (route host `gitea` from `config/instances.yaml`).
 
-[source,text]
-----
-URL: http://rhel01.{guid}.{domain}:3000
-Username: labuser
-Password: {password}
-----
+. Log in with:
++
+* Username: `labuser`
+* Password: `ansible123!`
++
+(If prompted for the admin account instead, use `gitea` / `ansible123!`.)
 
-Navigate to **Repositories > flask-api > Actions**.
+. Navigate to **Repositories > flask-api > Actions**.
 
 You should see a new workflow run that was triggered by the commit. Click on it to watch the pipeline execute:
 
@@ -193,9 +193,12 @@ ok: [localhost] => {
 
 You can also verify this yourself:
 
+. Click the **Flask App** tab and open `/version`, **or**
+. Open the **Terminal** tab and run:
+
 [source,bash]
 ----
-curl http://rhel01.{guid}.{domain}:5000/version
+curl http://rhel01:5000/version
 ----
 
 Expected output:

@@ -105,6 +105,14 @@
                   "pyyaml_version": pyyaml_version
               })
 
+          @app.route('/version')
+          def version():
+              pyyaml_version = pkg_resources.get_distribution("pyyaml").version
+              return jsonify({
+                  "app": "flask-api",
+                  "pyyaml_version": pyyaml_version
+              })
+
           @app.route('/api/parse-yaml', methods=['POST'])
           def parse_yaml():
               try:

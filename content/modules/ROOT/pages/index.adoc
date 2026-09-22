@@ -28,6 +28,37 @@ A critical vulnerability (CVE-2026-52891) has been discovered in PyYAML - a Pyth
 * **Concert**: IBM Concert instance (intelligence source, cloud-hosted)
 * **Lightwell**: Red Hat Lightwell service (remediated packages)
 
+== How to use this guide
+
+The workshop sidebar tabs map directly to the infrastructure in `config/instances.yaml`:
+
+[cols="1,2,2",options="header"]
+|===
+| Tab | Opens | Use it for
+
+| **AAP**
+| `https://control-${guid}.${domain}/`
+| Automation Controller login (`admin` / `ansible123!`), jobs, EDA activations
+
+| **Flask App**
+| `https://app-${guid}.${domain}/`
+| Vulnerable Flask API on `rhel01` (check `/version`)
+
+| **Gitea**
+| `https://gitea-${guid}.${domain}/`
+| Repository, commits, and Actions pipeline (`labuser` / `ansible123!`)
+
+| **Concert**
+| Shared Concert UI
+| Optional: browse Concert while workflows run
+
+| **Terminal**
+| SSH to `control`
+| Run `curl` and other CLI commands against lab hosts
+|===
+
+When a step says "click the **Flask App** tab" or "open the **Terminal** tab", use the sidebar — do not invent hostnames or ports.
+
 == Lab Modules
 
 This lab consists of 3 modules:

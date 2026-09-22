@@ -28,6 +28,15 @@ def health():
         "python_version": "3.11"
     })
 
+@app.route('/version')
+def version():
+    """Version endpoint used by lab verification steps"""
+    pyyaml_version = pkg_resources.get_distribution("pyyaml").version
+    return jsonify({
+        "app": "flask-api",
+        "pyyaml_version": pyyaml_version
+    })
+
 @app.route('/api/parse-yaml', methods=['POST'])
 def parse_yaml():
     """

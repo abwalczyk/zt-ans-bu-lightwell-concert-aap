@@ -166,15 +166,15 @@ virtualmachines:
     services:
       - name: app-http
         ports:
-          - port: 80
+          - port: 5000
             protocol: TCP
-            targetPort: 80
+            targetPort: 5000
             name: app-http
     routes:
       - name: app
         host: app
         service: app-http
-        targetPort: 80
+        targetPort: 5000
         tls: true
         tls_termination: Edge
     userdata: |-

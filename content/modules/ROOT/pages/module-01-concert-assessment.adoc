@@ -12,6 +12,16 @@ In this module, you'll trigger a CVE alert from a security scanner and watch how
 
 **Estimated time**: 15 minutes
 
+== Lab tabs you will use
+
+Use the workshop sidebar tabs for each step:
+
+* **Flask App** — vulnerable application on `rhel01` (route host `app`)
+* **AAP** — Automation Controller on `control`
+* **Terminal** — SSH session on `control` (run `curl` commands here)
+* **Gitea** — Git repository and CI/CD
+* **Concert** — shared Concert UI
+
 == The Scanner Overload Problem
 
 Modern security scanners like Mythos, Trivy, and others produce thousands of vulnerability alerts. In a typical enterprise environment:
@@ -24,14 +34,25 @@ Modern security scanners like Mythos, Trivy, and others produce thousands of vul
 
 == Step 1: View the Vulnerable Application
 
-First, let's verify that our Flask application is running with the vulnerable PyYAML version.
+First, verify that the Flask application is running with the vulnerable PyYAML version.
 
+. Click the **Flask App** tab in the workshop sidebar.
++
+This opens the application exposed from `rhel01` via the `app` route in `config/instances.yaml`.
+
+. Append `/version` to the URL in the address bar (or open that path directly) so you land on the version endpoint.
++
+Alternatively, open the **Terminal** tab and run:
++
 [source,bash]
 ----
-curl http://rhel01.{guid}.{domain}:5000/version
+curl http://rhel01:5000/version
 ----
++
+From the Terminal on `control`, `rhel01` resolves on the lab secondary network.
 
 Expected output:
+
 [source,json]
 ----
 {
@@ -42,36 +63,48 @@ Expected output:
 
 This confirms the application is using PyYAML 5.4.1, which contains CVE-2026-52891 (CVSS 9.8 - Critical).
 
-== Step 2: Trigger CVE Alert via Event-Driven Ansible
+==== Verify
 
-Your security scanner (Mythos) has detected CVE-2026-52891 and sends a webhook to Event-Driven Ansible.
+* The **Flask App** tab loads the application JSON (or `/version` returns the payload above)
+* PyYAML version is `5.4.1`
 
-Log into the Automation Controller:
+== Step 2: Open Automation Controller and find the EDA activation
 
-[source,text]
-----
-URL: https://control.{guid}.{domain}
-Username: admin
-Password: {password}
-----
+Your security scanner (Mythos) has detected CVE-2026-52891 and will send a webhook to Event-Driven Ansible.
 
-Navigate to **Event-Driven Ansible > Activations**.
+. Click the **AAP** tab in the workshop sidebar.
 
-You should see:
+. Log in with:
++
+* Username: `admin`
+* Password: `ansible123!`
 
+. In the left navigation, open **Automation Decisions** (Event-Driven Ansible) → **Rulebook Activations**.
+
+. Confirm the activation exists and is running:
++
 * **Activation Name**: `cve-scanner-webhook`
 * **Status**: Running
 * **Description**: Receives CVE alerts from security scanners
 
-This EDA activation is listening for incoming CVE webhooks on port 5000.
+This EDA activation listens for incoming CVE webhooks on port `5000` on the `control` host (service `eda-webhook` in `config/instances.yaml`).
+
+==== Verify
+
+* You can sign in to Automation Controller
+* Activation `cve-scanner-webhook` shows **Running**
 
 == Step 3: Simulate Scanner Alert
 
-In the real world, your security scanner would send this webhook automatically. For this lab, we'll simulate it:
+In the real world, your security scanner would send this webhook automatically. For this lab, simulate it from the Terminal on `control`.
+
+. Click the **Terminal** tab.
+
+. Run:
 
 [source,bash]
 ----
-curl -X POST http://control.{guid}.{domain}:5000/webhook \
+curl -X POST http://localhost:5000/webhook \
   -H "Content-Type: application/json" \
   -d '{
     "cve_id": "CVE-2026-52891",
@@ -85,6 +118,7 @@ curl -X POST http://control.{guid}.{domain}:5000/webhook \
 ----
 
 Expected output:
+
 [source,json]
 ----
 {
@@ -93,23 +127,36 @@ Expected output:
 }
 ----
 
+==== Verify
+
+* The `curl` command returns a received/queued response
+
 == Step 4: Watch Event-Driven Ansible Trigger Automation Orchestrator
 
-Go back to Automation Controller and navigate to **Event-Driven Ansible > Activations > cve-scanner-webhook > History**.
+. Return to the **AAP** tab.
 
-You should see a new event:
+. Navigate to **Automation Decisions** → **Rulebook Activations** → **cve-scanner-webhook** → **Instances** / **History** (wording may vary slightly by AAP version).
 
+. Find the new event for CVE-2026-52891. You should see something like:
++
 * **Event**: CVE-2026-52891 received
-* **Action**: Triggered Job Template `CVE Remediation Workflow`
+* **Action**: Triggered job / workflow `CVE Remediation Workflow`
 * **Timestamp**: Just now
 
-Click on the linked job to see the Automation Orchestrator workflow starting.
+. Click the linked job to open the Automation Orchestrator workflow run.
+
+==== Verify
+
+* A new activation event/history entry appears after the webhook
+* A related Controller job/workflow was launched
 
 == Step 5: Automation Orchestrator Queries Concert
 
-Navigate to **Jobs** and find the `CVE Remediation Workflow` job that was just triggered.
+. In the **AAP** tab, open **Automation Execution** → **Jobs**.
 
-Click into the job and watch the execution. You'll see these tasks executing:
+. Open the **CVE Remediation Workflow** job that was just triggered.
+
+. Watch the job output. You should see tasks similar to:
 
 [source,text]
 ----
@@ -148,12 +195,15 @@ ok: [localhost] => {
 * **Actionable Intelligence**: Concert recommended immediate remediation
 
 Without Concert, you would need to manually:
+
 1. Query all 487 applications for their Python dependencies
 2. Check each application's PyYAML version
 3. Assess which deployments are production vs. dev/test
 4. Prioritize based on risk and exposure
 
 Concert did this instantly by querying its pre-indexed SBOM database.
+
+Optionally open the **Concert** tab to explore the shared Concert UI while the workflow runs.
 
 == Step 6: Review Concert Action Center
 
