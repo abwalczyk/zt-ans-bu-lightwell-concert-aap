@@ -1,4 +1,13 @@
 ---
+type: showroom
+
+default_width: 30
+persist_url_state: true
+
+view_switcher:
+  enabled: true
+  default_mode: split
+
 antora:
   name: modules
   dir: www
@@ -30,4 +39,5 @@ tabs:
     url: https://44.244.194.122:12443/concert/
     external: true
   - name: Terminal
-    url: /wetty_control
+    path: /wetty
+    port: 443
