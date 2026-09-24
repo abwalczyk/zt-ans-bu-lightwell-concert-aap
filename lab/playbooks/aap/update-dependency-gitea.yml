@@ -1,20 +1,23 @@
 ---
 # Update Application Dependency in Gitea
-# Creates a Git branch, updates requirements.txt, commits and pushes
+# Clones from the Gitea container, updates requirements.txt, commits and pushes
 
 - name: Update PyYAML dependency in Gitea
-  hosts: app-gitea
+  hosts: localhost
   gather_facts: false
+  connection: local
   vars:
     cve_id: "{{ cve_id | default('CVE-2026-52891') }}"
     fixed_version: "{{ fixed_version | default('6.0.2') }}"
-    gitea_repo_path: "/home/{{ ansible_user }}/flask-api-app"
+    gitea_url: "{{ gitea_url | default('http://gitea:3000') }}"
+    gitea_repo: "{{ gitea_repo | default('labuser/flask-api-app') }}"
+    gitea_repo_path: "/tmp/flask-api-app-{{ cve_id | regex_replace('[^A-Za-z0-9_-]', '-') }}"
     branch_name: "cve-remediation/{{ cve_id }}"
 
   tasks:
     - name: Clone Gitea repository
       ansible.builtin.git:
-        repo: "http://localhost:3000/labuser/flask-api-app.git"
+        repo: "{{ gitea_url }}/{{ gitea_repo }}.git"
         dest: "{{ gitea_repo_path }}"
         version: main
         force: true
@@ -28,7 +31,7 @@
     - name: Update requirements.txt with fixed PyYAML version
       ansible.builtin.lineinfile:
         path: "{{ gitea_repo_path }}/requirements.txt"
-        regexp: '^pyyaml=='
+        regexp: '^(?i)pyyaml=='
         line: "pyyaml=={{ fixed_version }}  # Remediated via Lightwell ({{ cve_id }})"
         state: present
 
@@ -52,5 +55,5 @@
       ansible.builtin.set_stats:
         data:
           gitea_branch: "{{ branch_name }}"
-          gitea_repo: "flask-api-app"
+          gitea_repo: "{{ gitea_repo }}"
           commit_message: "Remediate {{ cve_id }} via Lightwell artifact"

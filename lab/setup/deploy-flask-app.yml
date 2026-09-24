@@ -16,12 +16,6 @@
         line: "192.168.1.10 control aap.example.org"
         state: present
 
-    - name: Ensure gitea host resolves
-      ansible.builtin.lineinfile:
-        path: /etc/hosts
-        line: "192.168.1.10 gitea"
-        state: present
-
     # ── SELinux ──────────────────────────────────────────────────────
     - name: Set SELinux to permissive for Flask development
       ansible.posix.selinux:
@@ -162,6 +156,9 @@
           WorkingDirectory={{ flask_app_dir }}
           ExecStart=/usr/bin/python3 {{ flask_app_dir }}/app.py
           Restart=always
+          AmbientCapabilities=CAP_NET_BIND_SERVICE
+          CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+          NoNewPrivileges=true
 
           [Install]
           WantedBy=multi-user.target

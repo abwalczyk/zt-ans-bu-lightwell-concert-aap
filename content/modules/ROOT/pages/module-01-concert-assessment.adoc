@@ -46,7 +46,7 @@ Alternatively, open the **Terminal** tab and run:
 +
 [source,bash]
 ----
-curl http://rhel01:5000/version
+curl http://rhel01/version
 ----
 +
 From the Terminal on `control`, `rhel01` resolves on the lab secondary network.

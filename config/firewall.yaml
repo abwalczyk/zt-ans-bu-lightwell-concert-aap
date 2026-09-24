@@ -1,37 +1,48 @@
 ---
-# Firewall rules for Concert + AAP + Lightwell lab
+# Concert + AAP + Lightwell — Network Policy
+# Control: AAP Controller + EDA
+# rhel01:  Flask application server
+# gitea:   Gitea container
 
-# Flask application access
-- port: 5000/tcp
-  source: 0.0.0.0/0
-  zone: public
-  state: enabled
-
-# Gitea web interface
-- port: 3000/tcp
-  source: 0.0.0.0/0
-  zone: public
-  state: enabled
-
-# AAP Controller (if deployed per-lab)
-- port: 443/tcp
-  source: 0.0.0.0/0
-  zone: public
-  state: enabled
-
-# SSH access
-- port: 22/tcp
-  source: 0.0.0.0/0
-  zone: public
-  state: enabled
-
-# HTTP/HTTPS for general access
-- port: 80/tcp
-  source: 0.0.0.0/0
-  zone: public
-  state: enabled
-
-- port: 8080/tcp
-  source: 0.0.0.0/0
-  zone: public
-  state: enabled
+ingress:
+- ports:
+  # ── General ──
+  - protocol: TCP
+    port: 22       # SSH
+  - protocol: TCP
+    port: 80       # HTTP (Flask app route)
+  - protocol: TCP
+    port: 443      # HTTPS (AAP Controller)
+  # ── Gitea ──
+  - protocol: TCP
+    port: 3000     # Gitea web UI
+  # ── EDA ──
+  - protocol: TCP
+    port: 5000     # EDA webhook endpoint
+  - protocol: TCP
+    port: 8443     # EDA Controller UI
+  - from:
+      - podSelector:
+          matchLabels:
+            kubevirt.io: virt-launcher
+egress:
+- ports:
+  # ── General ──
+  - protocol: TCP
+    port: 22       # SSH
+  - protocol: TCP
+    port: 80       # HTTP
+  - protocol: TCP
+    port: 443      # HTTPS
+  # ── Gitea ──
+  - protocol: TCP
+    port: 3000     # Gitea web UI
+  # ── EDA ──
+  - protocol: TCP
+    port: 5000     # EDA webhook endpoint
+  - protocol: TCP
+    port: 8443     # EDA Controller UI
+  - to:
+      - podSelector:
+          matchLabels:
+            kubevirt.io: virt-launcher

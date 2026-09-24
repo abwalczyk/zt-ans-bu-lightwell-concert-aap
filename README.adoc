@@ -69,9 +69,9 @@ zt-ans-bu-lightwell-concert-aap/
 │   ├── ansible.cfg
 │   └── tasks/
 │       ├── common-bootstrap.yml     # SSH, networking, RHSM
-│       ├── setup-app-gitea.yml      # Deploy Flask app + Gitea
-│       ├── configure-app-gitea.yml  # Configure Gitea repos, runners
-│       └── configure-aap.yml        # AAP job templates, credentials
+│       ├── setup-rhel01.yml         # Deploy Flask packages on rhel01
+│       ├── configure-rhel01.yml     # Start Flask on port 80
+│       └── configure-control.yml    # AAP wait + configure playbooks
 ├── lab/                             # Workshop content
 │   ├── playbooks/
 │   │   ├── concert/                 # Concert API query playbooks

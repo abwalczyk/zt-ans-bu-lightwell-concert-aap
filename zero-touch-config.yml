@@ -1,0 +1,43 @@
+---
+type: showroom
+
+default_width: 30
+persist_url_state: true
+
+view_switcher:
+  enabled: true
+  default_mode: split
+
+antora:
+  name: modules
+  dir: www
+  modules:
+    - name: index
+      label: "Introduction"
+      solveButton: false
+    - name: module-01-concert-assessment
+      label: "Module 1: Concert Vulnerability Assessment"
+      solveButton: false
+    - name: module-02-remediation
+      label: "Module 2: AAP Remediation Orchestration"
+      solveButton: false
+    - name: module-03-audit-trail
+      label: "Module 3: Audit Trail"
+      solveButton: false
+
+tabs:
+  - name: AAP
+    url: https://control-${guid}.${domain}/
+    external: false
+  - name: Flask App
+    url: https://app-${guid}.${domain}/
+    external: true
+  - name: Gitea
+    url: https://gitea-${guid}.${domain}/
+    external: true
+  - name: Concert
+    url: https://44.244.194.122:12443/concert/
+    external: true
+  - name: Terminal
+    path: /wetty
+    port: 443

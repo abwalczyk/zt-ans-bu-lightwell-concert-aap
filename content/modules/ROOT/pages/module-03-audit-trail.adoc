@@ -142,7 +142,7 @@ This provides:
 
 == Step 4: Gitea Source Control History
 
-Click the **Gitea** tab, log in (`labuser` / `ansible123!`), and navigate to **Repositories > flask-api > Commits**.
+Click the **Gitea** tab, log in (`labuser` / `ansible123!`), and navigate to **Repositories > flask-api-app > Commits**.
 
 Find the commit made by Automation Orchestrator:
 
@@ -213,7 +213,7 @@ Stage 3: Deploy (30s)
 Stage 4: Restart (10s)
   ✓ Restart flask-app.service
   ✓ Wait for health check
-  ✓ Application responding on port 5000
+  ✓ Application responding on port 80
 ----
 
 This proves:
@@ -229,7 +229,7 @@ Finally, verify the running application from the **Flask App** tab (`/version`) 
 
 [source,bash]
 ----
-curl http://rhel01:5000/version
+curl http://rhel01/version
 ----
 
 Response:

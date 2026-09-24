@@ -3,7 +3,7 @@
 # Confirms PyYAML version upgraded, application healthy, CVE resolved
 
 - name: Validate CVE remediation success
-  hosts: app-gitea
+  hosts: rhel01
   gather_facts: false
   vars:
     cve_id: "{{ cve_id | default('CVE-2026-52891') }}"
@@ -29,7 +29,7 @@
 
     - name: Test Flask application health
       ansible.builtin.uri:
-        url: http://localhost:5000/health
+        url: http://localhost:80/health
         return_content: true
       register: health_check
 
@@ -42,7 +42,7 @@
 
     - name: Test YAML parsing endpoint
       ansible.builtin.uri:
-        url: http://localhost:5000/api/parse-yaml
+        url: http://localhost:80/api/parse-yaml
         method: POST
         body: "name: test\nvalue: 123"
         headers:

@@ -39,15 +39,12 @@ containers:
     commands:
       - gitea admin user create --admin --username gitea --password ansible123!
         --email gitea@gitea.local --must-change-password=false
-      - >
-        curl -X POST -H "Content-Type: application/json"
-        -u 'gitea:ansible123!'
-        -d '{"username": "labuser", "visibility": "public", "full_name": "Lab User"}'
-        http://localhost:3000/api/v1/users
+      - gitea admin user create --username labuser --password ansible123!
+        --email labuser@lab.local --must-change-password=false
       - >
         curl -X POST -H "accept: application/json" -H "Content-Type:
         application/json" -u 'gitea:ansible123!' -d '{"clone_addr":
-        "https://github.com/rhpds/zt-ans-bu-lightwell-concert-aap.git", "repo_name":
+        "https://github.com/abwalczyk/zt-ans-bu-lightwell-concert-aap.git", "repo_name":
         "flask-api-app", "owner": "labuser", "private": false}'
         http://localhost:3000/api/v1/repos/migrate
     memory: 4Gi
@@ -166,15 +163,15 @@ virtualmachines:
     services:
       - name: app-http
         ports:
-          - port: 5000
+          - port: 80
             protocol: TCP
-            targetPort: 5000
+            targetPort: 80
             name: app-http
     routes:
       - name: app
         host: app
         service: app-http
-        targetPort: 5000
+        targetPort: 80
         tls: true
         tls_termination: Edge
     userdata: |-

@@ -1,6 +1,6 @@
 ---
-# Configure app-gitea host
-# Deploys Flask application, starts Gitea, creates repositories
+# Configure rhel01 — deploy and start Flask application only
+# Gitea is the container from config/instances.yaml (route host: gitea)
 
 - name: Deploy Flask application files
   ansible.builtin.template:
@@ -33,6 +33,9 @@
       WorkingDirectory=/opt/flask-app
       ExecStart=/usr/bin/python3 /opt/flask-app/app.py
       Restart=always
+      AmbientCapabilities=CAP_NET_BIND_SERVICE
+      CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+      NoNewPrivileges=true
 
       [Install]
       WantedBy=multi-user.target
@@ -47,91 +50,12 @@
     daemon_reload: true
   tags: flask
 
-- name: Create Gitea configuration
-  ansible.builtin.copy:
-    dest: /etc/gitea/app.ini
-    content: |
-      [database]
-      DB_TYPE  = sqlite3
-      PATH     = /var/lib/gitea/data/gitea.db
-
-      [repository]
-      ROOT = /var/lib/gitea/repositories
-
-      [server]
-      DOMAIN           = localhost
-      HTTP_PORT        = 3000
-      ROOT_URL         = http://localhost:3000/
-      DISABLE_SSH      = false
-      SSH_PORT         = 22
-      LFS_START_SERVER = true
-
-      [security]
-      INSTALL_LOCK   = false
-      SECRET_KEY     = change-this-to-a-secure-key
-      INTERNAL_TOKEN = change-this-to-a-secure-token
-
-      [service]
-      DISABLE_REGISTRATION = false
-      REQUIRE_SIGNIN_VIEW  = false
-
-      [log]
-      MODE      = file
-      LEVEL     = info
-      ROOT_PATH = /var/lib/gitea/log
-    owner: gitea
-    group: gitea
-    mode: '0640'
-  tags: gitea
-
-- name: Initialize Gitea database
-  ansible.builtin.command:
-    cmd: /usr/local/bin/gitea migrate --config /etc/gitea/app.ini
-  become: true
-  become_user: gitea
-  environment:
-    GITEA_WORK_DIR: /var/lib/gitea
-  args:
-    creates: /var/lib/gitea/data/gitea.db
-  failed_when: false
-  tags: gitea
-
-- name: Create Gitea systemd service
-  ansible.builtin.copy:
-    dest: /etc/systemd/system/gitea.service
-    content: |
-      [Unit]
-      Description=Gitea (Git with a cup of tea)
-      After=network.target
-
-      [Service]
-      Type=simple
-      User=gitea
-      Group=gitea
-      WorkingDirectory=/var/lib/gitea
-      ExecStart=/usr/local/bin/gitea web --config /etc/gitea/app.ini
-      Restart=always
-      Environment=USER=gitea HOME=/var/lib/gitea GITEA_WORK_DIR=/var/lib/gitea
-
-      [Install]
-      WantedBy=multi-user.target
-    mode: '0644'
-  tags: gitea
-
-- name: Start and enable Gitea
-  ansible.builtin.systemd:
-    name: gitea
-    state: started
-    enabled: true
-    daemon_reload: true
-  tags: gitea
-
-- name: Wait for Gitea to be ready
+- name: Wait for Flask application to be ready
   ansible.builtin.uri:
-    url: http://localhost:3000
+    url: "http://localhost:{{ app_port | default(80) }}/version"
     status_code: 200
-  register: gitea_ready
-  until: gitea_ready is success
-  retries: 30
+  register: flask_ready
+  until: flask_ready is success
+  retries: 15
   delay: 2
-  tags: gitea
+  tags: flask

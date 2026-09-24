@@ -9,6 +9,7 @@ asciidoc:
     release-version: master
     page-pagination: true
     guid: my-guid
+    domain: example.rhdp.net
     ssh_user: rhel
     ssh_password: ansible123!
     ssh_command: ssh rhel@control

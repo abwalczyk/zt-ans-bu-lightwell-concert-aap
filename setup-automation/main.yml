@@ -29,7 +29,7 @@
         ansible_ssh_user: "{{ lookup('ansible.builtin.env', 'BASTION_USER') }}"
         ansible_ssh_pass: "{{ lookup('ansible.builtin.env', 'BASTION_PASSWORD') }}"
         ansible_become_password: "{{ lookup('ansible.builtin.env', 'BASTION_PASSWORD') }}"
-        ansible_python_interpreter: /usr/bin/python3
+        ansible_python_interpreter: /usr/libexec/platform-python
         net_interface: eth1
         net_address: 192.168.1.13/24
         net_dns: ""
@@ -97,7 +97,7 @@
     lab_password: ansible123!
     flask_app_dir: /opt/flask-app
     flask_app_service: flask-app
-    app_port: 5000
+    app_port: 80
   tasks:
     - name: Configure Flask application
       ansible.builtin.include_tasks: tasks/configure-rhel01.yml

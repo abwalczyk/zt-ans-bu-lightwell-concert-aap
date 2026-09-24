@@ -90,7 +90,7 @@ changed: [localhost]
 TASK [Display Git commit]
 ok: [localhost] => {
     "git_commit": {
-        "repo": "flask-api",
+        "repo": "flask-api-app",
         "branch": "main",
         "commit_sha": "a1b2c3d4e5f6",
         "message": "fix: upgrade PyYAML 5.4.1 → 6.0.2 (CVE-2026-52891)\n\nRemediates CVE-2026-52891 (CVSS 9.8)\nLightwell package: PyYAML 6.0.2\nConcert risk score: 95\n\nCo-Authored-By: Automation Orchestrator"
@@ -118,7 +118,7 @@ The git push triggers the Gitea Actions CI/CD pipeline automatically.
 +
 (If prompted for the admin account instead, use `gitea` / `ansible123!`.)
 
-. Navigate to **Repositories > flask-api > Actions**.
+. Navigate to **Repositories > flask-api-app > Actions**.
 
 You should see a new workflow run that was triggered by the commit. Click on it to watch the pipeline execute:
 
@@ -198,7 +198,7 @@ You can also verify this yourself:
 
 [source,bash]
 ----
-curl http://rhel01:5000/version
+curl http://rhel01/version
 ----
 
 Expected output:

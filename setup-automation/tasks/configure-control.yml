@@ -1,27 +1,72 @@
 ---
-# Configure AAP Controller
-# Wait for AAP, generate OAuth token, run AAP configuration playbooks
+# Configure AAP Controller on control
+# Wait for AAP, generate OAuth token, run lab setup playbooks
 
-- name: Wait for AAP automation controller to be ready
+- name: Wait for AAP Controller API to be ready
   ansible.builtin.uri:
-    url: https://localhost/api/v2/ping/
+    url: "https://control/api/controller/v2/ping/"
+    method: GET
+    user: admin
+    password: "ansible123!"
+    force_basic_auth: true
     validate_certs: false
     status_code: 200
   register: _aap_ping
-  until: _aap_ping is success
-  retries: 10
-  delay: 5
-  failed_when: false
-  ignore_errors: true
+  retries: 60
+  delay: 10
+  until: _aap_ping.status == 200
 
-- name: Run AAP configuration playbook
+- name: Generate AAP OAuth token
+  ansible.builtin.uri:
+    url: "https://control/api/controller/v2/tokens/"
+    method: POST
+    user: admin
+    password: "ansible123!"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body:
+      description: "concert-lab-setup-automation"
+      application: null
+      scope: "write"
+    status_code: 201
+  register: _aap_token
+
+- name: Validate OAuth token was generated
+  ansible.builtin.assert:
+    that:
+      - _aap_token.json.token is defined
+      - _aap_token.json.token | length > 0
+    fail_msg: "Failed to generate AAP OAuth token"
+
+- name: Set OAuth token fact
+  ansible.builtin.set_fact:
+    controller_oauth_token: "{{ _aap_token.json.token }}"
+
+- name: Deploy Flask application on rhel01
   ansible.builtin.command:
-    cmd: ansible-playbook lab/setup/configure-aap.yml
+    cmd: >-
+      ansible-playbook lab/setup/deploy-flask-app.yml
+      -i lab/inventory/workshop.yml
+      -e "ansible_ssh_pass={{ hostvars[inventory_hostname].ansible_ssh_pass | default('ansible123!') }}"
     chdir: "{{ workshop_repo_dest }}"
   environment:
-    GUID: "{{ guid | default('') }}"
-    DOMAIN: "{{ domain | default('') }}"
+    ANSIBLE_HOST_KEY_CHECKING: "False"
+  register: _flask_deploy
+  changed_when: true
+  failed_when: false
+
+- name: Configure AAP Controller
+  ansible.builtin.command:
+    cmd: >-
+      ansible-playbook lab/setup/configure-aap.yml
+      -i lab/inventory/workshop.yml
+      -e "controller_oauth_token_override={{ controller_oauth_token }}"
+      -e "ansible_ssh_pass={{ hostvars[inventory_hostname].ansible_ssh_pass | default('ansible123!') }}"
+      -e "workshop_guid={{ guid | default('') }}"
+      -e "workshop_domain={{ domain | default('') }}"
+    chdir: "{{ workshop_repo_dest }}"
+  environment:
+    ANSIBLE_HOST_KEY_CHECKING: "False"
   register: _aap_config
   changed_when: true
-  when: _aap_ping is success
-  failed_when: false
