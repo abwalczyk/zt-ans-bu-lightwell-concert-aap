@@ -23,7 +23,7 @@
       username: rhel
       password: ansible123!
       become_password: ansible123!
-    controller_host: https://control
+    controller_host: https://localhost
     controller_username: admin
     controller_password: ansible123!
     validate_certs: false
@@ -38,7 +38,7 @@
     scm_url: http://gitea:3000/labuser/flask-api-app.git
     scm_branch: main
     scm_update_on_launch: true
-    controller_host: https://control
+    controller_host: https://localhost
     controller_username: admin
     controller_password: ansible123!
     validate_certs: false
@@ -49,7 +49,7 @@
     name: Concert Lab Inventory
     description: Flask application server (rhel01)
     organization: Default
-    controller_host: https://control
+    controller_host: https://localhost
     controller_username: admin
     controller_password: ansible123!
     validate_certs: false
@@ -63,7 +63,7 @@
     variables:
       ansible_host: rhel01
       ansible_user: rhel
-    controller_host: https://control
+    controller_host: https://localhost
     controller_username: admin
     controller_password: ansible123!
     validate_certs: false

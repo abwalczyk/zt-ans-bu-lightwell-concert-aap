@@ -2,23 +2,24 @@
 # Configure AAP Controller on control
 # Wait for AAP, generate OAuth token, run lab setup playbooks
 
+# This CEH image exposes the classic controller API on localhost.
+# Do not use https://control here — that hostname often resolves to eth1
+# while the gateway/listener is on localhost.
+
 - name: Wait for AAP Controller API to be ready
   ansible.builtin.uri:
-    url: "https://control/api/controller/v2/ping/"
+    url: https://localhost/api/v2/ping/
     method: GET
-    user: admin
-    password: "ansible123!"
-    force_basic_auth: true
     validate_certs: false
     status_code: 200
   register: _aap_ping
   retries: 60
   delay: 10
-  until: _aap_ping.status == 200
+  until: _aap_ping is success
 
 - name: Generate AAP OAuth token
   ansible.builtin.uri:
-    url: "https://control/api/controller/v2/tokens/"
+    url: https://localhost/api/v2/tokens/
     method: POST
     user: admin
     password: "ansible123!"
@@ -29,7 +30,7 @@
       description: "concert-lab-setup-automation"
       application: null
       scope: "write"
-    status_code: 201
+    status_code: [200, 201]
   register: _aap_token
 
 - name: Validate OAuth token was generated
@@ -37,7 +38,7 @@
     that:
       - _aap_token.json.token is defined
       - _aap_token.json.token | length > 0
-    fail_msg: "Failed to generate AAP OAuth token"
+    fail_msg: "Failed to generate AAP OAuth token. Ping OK but token create failed."
 
 - name: Set OAuth token fact
   ansible.builtin.set_fact:
