@@ -72,10 +72,7 @@
   changed_when: false
 
 - name: Register with subscription-manager
-  when:
-    - r_rhsm_check.rc != 0
-    - tmm_org | default('') | length > 0
-    - tmm_id | default('') | length > 0
+  when: r_rhsm_check.rc != 0
   block:
     - name: Clean existing subscription data
       ansible.builtin.shell: |
