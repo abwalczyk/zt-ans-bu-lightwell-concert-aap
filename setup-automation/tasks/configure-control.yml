@@ -22,7 +22,7 @@
 
 - name: Generate AAP OAuth token
   ansible.builtin.uri:
-    url: https://control/api/v2/tokens/
+    url: https://control/api/controller/v2/tokens/
     method: POST
     user: admin
     password: "ansible123!"
