@@ -19,6 +19,10 @@
 - name: "Phase 2: Configure AAP Controller resources"
   ansible.builtin.import_playbook: configure-aap.yml
 
+# ── Phase 2b: EDA Controller ─────────────────────────────────────────
+- name: "Phase 2b: Configure EDA Controller (credential, project, activation)"
+  ansible.builtin.import_playbook: configure-eda.yml
+
 # ── Phase 3: Concert Integration ────────────────────────────────────
 - name: "Phase 3: Display Concert Workflow configuration instructions"
   ansible.builtin.import_playbook: configure-concert-workflow.yml

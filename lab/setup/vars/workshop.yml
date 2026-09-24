@@ -21,6 +21,13 @@ aap_host: "https://localhost"
 aap_user: admin
 aap_password: "{{ aap_admin_password | default('ansible123!') }}"
 
+# EDA Controller (same CEH host; use localhost like AAP)
+eda_host: "https://localhost"
+eda_user: admin
+eda_password: "{{ eda_admin_password | default('ansible123!') }}"
+eda_webhook_port: 5000
+eda_scm_url: "https://github.com/abwalczyk/zt-ans-bu-lightwell-concert-aap.git"
+
 # Host references
 app_server_host: rhel01
 control_host: control

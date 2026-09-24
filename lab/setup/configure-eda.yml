@@ -1,0 +1,262 @@
+---
+- name: Configure EDA Controller for Concert lab
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  vars_files:
+    - vars/workshop.yml
+
+  vars:
+    eda_api: "{{ eda_host }}/api/eda/v1"
+    eda_controller_cred_name: "Concert Controller Token"
+    eda_activation_name: "cve-scanner-webhook"
+    eda_rulebook_filename: "cve-alert.yml"
+    # Public workshop repo so EDA can sync rulebooks under extensions/eda/rulebooks/
+    eda_project_url: "{{ eda_scm_url | default('https://github.com/abwalczyk/zt-ans-bu-lightwell-concert-aap.git') }}"
+
+  tasks:
+    # ── Wait for EDA Controller ────────────────────────────────────────
+    - name: Wait for EDA Controller API to be ready
+      ansible.builtin.uri:
+        url: "{{ eda_api }}/users/me/"
+        user: "{{ eda_user }}"
+        password: "{{ eda_password }}"
+        validate_certs: false
+        force_basic_auth: true
+        status_code: [200]
+      retries: 30
+      delay: 10
+      register: _eda_ready
+      until: _eda_ready is succeeded
+
+    # ── EDA Organization lookup ────────────────────────────────────────
+    - name: Get Default organization ID
+      ansible.builtin.uri:
+        url: "{{ eda_api }}/organizations/?name=Default"
+        user: "{{ eda_user }}"
+        password: "{{ eda_password }}"
+        validate_certs: false
+        force_basic_auth: true
+      register: _eda_org
+
+    - name: Set EDA organization ID fact
+      ansible.builtin.set_fact:
+        eda_org_id: "{{ _eda_org.json.results[0].id }}"
+
+    # ── EDA Credential for AAP ─────────────────────────────────────────
+    - name: Look up AAP credential type in EDA
+      ansible.builtin.uri:
+        url: "{{ eda_api }}/credential-types/?name={{ 'Red Hat Ansible Automation Platform' | urlencode }}"
+        user: "{{ eda_user }}"
+        password: "{{ eda_password }}"
+        validate_certs: false
+        force_basic_auth: true
+        status_code: [200]
+      register: _eda_aap_cred_type
+
+    - name: Set EDA AAP credential type ID
+      ansible.builtin.set_fact:
+        eda_aap_cred_type_id: "{{ _eda_aap_cred_type.json.results[0].id }}"
+
+    - name: Check existing EDA credentials
+      ansible.builtin.uri:
+        url: "{{ eda_api }}/eda-credentials/?name={{ eda_controller_cred_name | urlencode }}"
+        user: "{{ eda_user }}"
+        password: "{{ eda_password }}"
+        validate_certs: false
+        force_basic_auth: true
+      register: _existing_cred
+
+    - name: Create EDA credential for AAP Controller
+      ansible.builtin.uri:
+        url: "{{ eda_api }}/eda-credentials/"
+        method: POST
+        user: "{{ eda_user }}"
+        password: "{{ eda_password }}"
+        validate_certs: false
+        force_basic_auth: true
+        body_format: json
+        body:
+          name: "{{ eda_controller_cred_name }}"
+          description: "AAP Controller access for Concert CVE remediation workflows"
+          organization_id: "{{ eda_org_id | int }}"
+          credential_type_id: "{{ eda_aap_cred_type_id | int }}"
+          inputs:
+            host: "{{ aap_host | regex_replace('/$', '') }}/api/controller/"
+            username: "{{ aap_user }}"
+            password: "{{ aap_password }}"
+            verify_ssl: false
+        status_code: [201]
+      when: _existing_cred.json.count == 0
+
+    - name: Resolve EDA credential ID
+      ansible.builtin.uri:
+        url: "{{ eda_api }}/eda-credentials/?name={{ eda_controller_cred_name | urlencode }}"
+        user: "{{ eda_user }}"
+        password: "{{ eda_password }}"
+        validate_certs: false
+        force_basic_auth: true
+      register: _eda_cred
+
+    - name: Set EDA credential ID fact
+      ansible.builtin.set_fact:
+        eda_cred_id: "{{ _eda_cred.json.results[0].id }}"
+
+    # ── EDA Project ────────────────────────────────────────────────────
+    - name: Check existing EDA projects
+      ansible.builtin.uri:
+        url: "{{ eda_api }}/projects/?name={{ workshop_project_name | urlencode }}"
+        user: "{{ eda_user }}"
+        password: "{{ eda_password }}"
+        validate_certs: false
+        force_basic_auth: true
+      register: _existing_project
+
+    - name: Create EDA project
+      ansible.builtin.uri:
+        url: "{{ eda_api }}/projects/"
+        method: POST
+        user: "{{ eda_user }}"
+        password: "{{ eda_password }}"
+        validate_certs: false
+        force_basic_auth: true
+        body_format: json
+        body:
+          name: "{{ workshop_project_name }}"
+          description: "Concert CVE lab rulebooks"
+          organization_id: "{{ eda_org_id | int }}"
+          url: "{{ eda_project_url }}"
+        status_code: [201]
+      register: _eda_project
+      when: _existing_project.json.count == 0
+
+    - name: Get EDA project ID
+      ansible.builtin.set_fact:
+        eda_project_id: >-
+          {{ _eda_project.json.id | default(_existing_project.json.results[0].id) }}
+
+    - name: Wait for EDA project sync
+      ansible.builtin.uri:
+        url: "{{ eda_api }}/projects/{{ eda_project_id }}/"
+        user: "{{ eda_user }}"
+        password: "{{ eda_password }}"
+        validate_certs: false
+        force_basic_auth: true
+      register: _project_status
+      retries: 36
+      delay: 5
+      until: _project_status.json.import_state | default('') in ['completed', 'failed']
+
+    - name: Fail if EDA project sync failed
+      ansible.builtin.fail:
+        msg: >-
+          EDA project sync failed:
+          {{ _project_status.json.import_error | default('unknown error') }}
+      when: _project_status.json.import_state | default('') != 'completed'
+
+    # ── Rulebook lookup ────────────────────────────────────────────────
+    - name: List rulebooks for EDA project
+      ansible.builtin.uri:
+        url: "{{ eda_api }}/rulebooks/?project_id={{ eda_project_id }}"
+        user: "{{ eda_user }}"
+        password: "{{ eda_password }}"
+        validate_certs: false
+        force_basic_auth: true
+      register: _eda_rulebooks
+
+    - name: Set rulebook ID fact
+      ansible.builtin.set_fact:
+        eda_rulebook_id: >-
+          {{
+            (_eda_rulebooks.json.results
+             | selectattr('name', 'search', eda_rulebook_filename)
+             | map(attribute='id')
+             | list
+             | first)
+            | default('')
+          }}
+
+    - name: Fail if rulebook not found after sync
+      ansible.builtin.fail:
+        msg: >-
+          Rulebook {{ eda_rulebook_filename }} not found in EDA project
+          {{ workshop_project_name }}. Available:
+          {{ _eda_rulebooks.json.results | map(attribute='name') | list }}
+      when: eda_rulebook_id | string | length == 0
+
+    # ── Decision environment ───────────────────────────────────────────
+    - name: List decision environments
+      ansible.builtin.uri:
+        url: "{{ eda_api }}/decision-environments/"
+        user: "{{ eda_user }}"
+        password: "{{ eda_password }}"
+        validate_certs: false
+        force_basic_auth: true
+      register: _eda_des
+
+    - name: Prefer Default Decision Environment when present
+      ansible.builtin.set_fact:
+        eda_de_id: >-
+          {{
+            (
+              _eda_des.json.results
+              | selectattr('name', 'search', 'Default')
+              | map(attribute='id')
+              | list
+              | first
+            )
+            | default(_eda_des.json.results[0].id | default(''))
+          }}
+
+    - name: Fail if no decision environment exists
+      ansible.builtin.fail:
+        msg: >-
+          No EDA decision environments found. Preload a Default Decision
+          Environment on the CEH image, or create one before lab setup.
+      when: eda_de_id | string | length == 0
+
+    # ── Rulebook activation ────────────────────────────────────────────
+    - name: Check existing activations
+      ansible.builtin.uri:
+        url: "{{ eda_api }}/activations/?name={{ eda_activation_name | urlencode }}"
+        user: "{{ eda_user }}"
+        password: "{{ eda_password }}"
+        validate_certs: false
+        force_basic_auth: true
+      register: _existing_activation
+
+    - name: Create cve-scanner-webhook activation
+      ansible.builtin.uri:
+        url: "{{ eda_api }}/activations/"
+        method: POST
+        user: "{{ eda_user }}"
+        password: "{{ eda_password }}"
+        validate_certs: false
+        force_basic_auth: true
+        body_format: json
+        body:
+          name: "{{ eda_activation_name }}"
+          description: "Receives CVE alerts from security scanners"
+          organization_id: "{{ eda_org_id | int }}"
+          project_id: "{{ eda_project_id | int }}"
+          rulebook_id: "{{ eda_rulebook_id | int }}"
+          decision_environment_id: "{{ eda_de_id | int }}"
+          eda_credentials:
+            - "{{ eda_cred_id | int }}"
+          restart_policy: always
+          is_enabled: true
+        status_code: [201]
+      register: _eda_activation
+      when: _existing_activation.json.count | default(0) == 0
+
+    - name: Report EDA configuration status
+      ansible.builtin.debug:
+        msg: |
+          EDA Controller configured for Concert lab:
+            Credential:   {{ eda_controller_cred_name }}
+            Project:      {{ workshop_project_name }}
+            Rulebook:     {{ eda_rulebook_filename }} (id={{ eda_rulebook_id }})
+            Activation:   {{ eda_activation_name }}
+            DE id:        {{ eda_de_id }}
+            Webhook:      POST http://localhost:{{ eda_webhook_port }}/webhook
