@@ -15,8 +15,9 @@ company_name: "Concert Demo Corp"
 app_port: 80
 gitea_port: 3000
 
-# AAP Controller
-aap_host: "https://{{ hostvars['control']['ansible_host'] | default('control') }}"
+# AAP Controller (shared or per-lab)
+# From the control VM use localhost — hostname "control" may resolve to eth1
+aap_host: "https://localhost"
 aap_user: admin
 aap_password: "{{ aap_admin_password | default('ansible123!') }}"
 

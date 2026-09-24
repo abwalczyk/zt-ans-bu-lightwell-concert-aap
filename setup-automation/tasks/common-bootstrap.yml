@@ -1,12 +1,10 @@
 ---
 # Common bootstrap tasks executed on all hosts in parallel.
-# Copied from zt-ans-defend-contain-comply common-bootstrap.yml
+# Uses only ansible.builtin.* modules for container compatibility.
 #
 # Required variables (set via add_host in inventory play):
-#   net_interface   - NIC name (e.g. eth1, enp2s0)
-#   net_address     - CIDR address (e.g. 192.168.1.12/24)
-#   net_dns         - DNS server IP (optional)
-#   net_dns_search  - DNS search domain (optional)
+#   net_interface   - NIC name (e.g. eth1)
+#   net_address     - CIDR address (e.g. 192.168.1.13/24)
 #   hosts_entries   - list of {ip, names} dicts
 #   tmm_org         - subscription-manager org
 #   tmm_id          - subscription-manager activation key
@@ -16,19 +14,12 @@
   register: r_selinux
   changed_when: false
 
-- name: Set SELinux to permissive (infrastructure hosts only)
+- name: Set SELinux to permissive
   ansible.builtin.command: setenforce 0
   when:
     - r_selinux.stdout == 'Enforcing'
     - selinux_mode | default('permissive') == 'permissive'
   changed_when: true
-
-- name: Stop firewalld (infrastructure hosts only)
-  ansible.builtin.systemd:
-    name: firewalld
-    state: stopped
-  when: selinux_mode | default('permissive') == 'permissive'
-  failed_when: false
 
 - name: Populate /etc/hosts entries
   ansible.builtin.lineinfile:
@@ -46,48 +37,106 @@
   failed_when: false
   changed_when: false
 
-- name: Create nmcli connection
+- name: Create nmcli connection if it doesn't exist
   ansible.builtin.command: >-
     nmcli connection add
     type ethernet
     con-name {{ net_interface }}
     ifname {{ net_interface }}
-    ipv4.addresses {{ net_address }}
     ipv4.method manual
-    {{ 'ipv4.dns ' ~ net_dns if net_dns | default('') | length > 0 else '' }}
-    {{ 'ipv4.dns-search ' ~ net_dns_search if net_dns_search | default('') | length > 0 else '' }}
-    connection.autoconnect yes
+    ipv4.addresses {{ net_address }}
   when: r_nmcli_check.rc != 0
+  changed_when: true
+
+- name: Modify existing nmcli connection
+  ansible.builtin.command: >-
+    nmcli connection modify {{ net_interface }}
+    ipv4.method manual
+    ipv4.addresses {{ net_address }}
+  when: r_nmcli_check.rc == 0
   changed_when: true
 
 - name: Bring up nmcli connection
   ansible.builtin.command: "nmcli connection up {{ net_interface }}"
+  changed_when: true
   failed_when: false
-  changed_when: false
 
-- name: Check subscription-manager registration
-  ansible.builtin.command: subscription-manager identity
-  register: r_rhsm_check
-  failed_when: false
-  changed_when: false
-
-- name: Register with subscription-manager
-  when: r_rhsm_check.rc != 0
+- name: Configure subscription-manager for Satellite
+  when:
+    - lookup('ansible.builtin.env', 'SATELLITE_URL') | default('') | length > 0
   block:
-    - name: Clean existing subscription data
-      ansible.builtin.shell: |
-        dnf clean all || true
-        rm -f /etc/yum.repos.d/redhat-rhui*.repo
-        sed -i 's/enabled=1/enabled=0/' /etc/dnf/plugins/amazon-id.conf 2>/dev/null || true
-        subscription-manager unregister 2>/dev/null || true
-        subscription-manager remove --all 2>/dev/null || true
-        subscription-manager clean
+    - name: Set manage_repos=1 in rhsm.conf (AWS images use RHUI by default)
+      ansible.builtin.lineinfile:
+        path: /etc/rhsm/rhsm.conf
+        regexp: '^manage_repos.*=.*0'
+        line: 'manage_repos = 1'
+        state: present
+
+    - name: Clean stale Satellite registration
+      ansible.builtin.command: subscription-manager clean
+      changed_when: true
+      failed_when: false
+
+    - name: Download Satellite CA certificate
+      ansible.builtin.get_url:
+        url: "https://{{ lookup('ansible.builtin.env', 'SATELLITE_URL') }}/pub/katello-server-ca.crt"
+        dest: "/etc/pki/ca-trust/source/anchors/{{ lookup('ansible.builtin.env', 'SATELLITE_URL') }}.ca.crt"
+        validate_certs: false
+        mode: '0644'
+
+    - name: Update CA trust
+      ansible.builtin.command: update-ca-trust
       changed_when: true
 
-    - name: Register system
+    - name: Check if katello-ca-consumer is installed
+      ansible.builtin.command: rpm -q katello-ca-consumer-latest
+      register: r_katello
+      failed_when: false
+      changed_when: false
+
+    - name: Install katello-ca-consumer RPM
+      ansible.builtin.command: >-
+        rpm -Uhv https://{{ lookup('ansible.builtin.env', 'SATELLITE_URL') }}/pub/katello-ca-consumer-latest.noarch.rpm
+      when: r_katello.rc != 0
+      changed_when: true
+      failed_when: false
+
+    - name: Check subscription-manager status
+      ansible.builtin.command: subscription-manager status
+      register: r_rhsm_status
+      failed_when: false
+      changed_when: false
+
+    - name: Register with Satellite
       ansible.builtin.command: >-
         subscription-manager register
-        --org="{{ tmm_org }}"
-        --activationkey="{{ tmm_id }}"
-        --force
+        --org={{ lookup('ansible.builtin.env', 'SATELLITE_ORG') }}
+        --activationkey={{ lookup('ansible.builtin.env', 'SATELLITE_ACTIVATIONKEY') }}
+      when: r_rhsm_status.rc != 0
       changed_when: true
+
+    - name: Disable AWS RHUI repos
+      ansible.builtin.command: dnf config-manager --set-disabled '*rhui*'
+      changed_when: true
+      failed_when: false
+
+    - name: Disable amazon-id DNF plugin
+      ansible.builtin.lineinfile:
+        path: /etc/dnf/plugins/amazon-id.conf
+        regexp: '^enabled.*=.*1'
+        line: 'enabled=0'
+        state: present
+      failed_when: false
+
+- name: Install base packages
+  ansible.builtin.dnf:
+    name:
+      - git
+      - vim
+      - wget
+      - curl
+      - python3-pip
+    state: present
+  register: r_packages
+  failed_when: false
+  # Packages may already be installed or repos may not be needed
