@@ -1,5 +1,7 @@
 ---
 # Phase 1: Build dynamic inventory with per-host network variables
+# Structure aligned with zt-ans-defend-contain-comply
+
 - name: Create inventory
   hosts: localhost
   gather_facts: false
@@ -58,9 +60,10 @@
     - name: Run common bootstrap tasks
       ansible.builtin.include_tasks: tasks/common-bootstrap.yml
 
-# Phase 3: Host-specific bootstrap in parallel
+# Phase 3: Host-specific bootstrap (control only — same as defend)
+# control: repos, packages, collections, clone repo, symlink awx.awx
 - name: Host-specific bootstrap
-  hosts: control,rhel01
+  hosts: control
   gather_facts: false
   become: true
   any_errors_fatal: true
@@ -72,37 +75,12 @@
     workshop_repo_url: "https://github.com/abwalczyk/zt-ans-bu-lightwell-concert-aap.git"
     workshop_repo_dest: /tmp/concert-lab
     workshop_repo_branch: main
-    lab_user: labuser
-    lab_password: ansible123!
   tasks:
     - name: Bootstrap control node
       ansible.builtin.include_tasks: tasks/setup-control.yml
-      when: inventory_hostname == 'control'
 
-    - name: Bootstrap rhel01 node
-      ansible.builtin.include_tasks: tasks/setup-rhel01.yml
-      when: inventory_hostname == 'rhel01'
-
-# Phase 4: rhel01 configure (Flask app)
-- name: rhel01 application configuration
-  hosts: rhel01
-  gather_facts: false
-  become: true
-  any_errors_fatal: true
-  vars_files:
-    - ../config/secrets.yaml
-  vars:
-    workshop_repo_dest: /tmp/concert-lab
-    lab_user: labuser
-    lab_password: ansible123!
-    flask_app_dir: /opt/flask-app
-    flask_app_service: flask-app
-    app_port: 80
-  tasks:
-    - name: Configure Flask application
-      ansible.builtin.include_tasks: tasks/configure-rhel01.yml
-
-# Phase 5: Control AAP configuration
+# Phase 4: Control configure
+# Waits for AAP, generates OAuth token, runs Flask deploy + AAP configuration
 - name: Control AAP configuration
   hosts: control
   gather_facts: false
@@ -114,5 +92,5 @@
     guid: "{{ lookup('ansible.builtin.env', 'GUID') }}"
     domain: "{{ lookup('ansible.builtin.env', 'DOMAIN') }}"
   tasks:
-    - name: Configure AAP controller
+    - name: Configure AAP and lab resources
       ansible.builtin.include_tasks: tasks/configure-control.yml
