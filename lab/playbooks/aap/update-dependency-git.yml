@@ -19,6 +19,31 @@
       {%- if fixes_cve | length > 0 %} (fixes {{ fixes_cve | join(', ') }}){% endif %}
 
   tasks:
+    # app_repo_url arrives from Concert's SBOM record. In demo mode that record
+    # is representative data pointing at a repository this lab does not own, so
+    # cloning and pushing would fail. Report the change that would be made.
+    - name: Report the dependency bump without touching a repository (demo mode)
+      when: lab_demo_mode | default(true) | bool
+      block:
+        - name: Explain what was not pushed
+          ansible.builtin.debug:
+            msg: >-
+              DEMO MODE: no writable application repository is wired into this
+              lab, so nothing was cloned, committed or pushed. Reporting the
+              branch and commit that a live run would have created for
+              {{ package_name }} {{ package_version }}.
+
+        - name: Set git stats (demo mode)
+          ansible.builtin.set_stats:
+            data:
+              git_branch: "{{ branch_name }}"
+              git_repo: "{{ app_repo_url }}"
+              git_commit_sha: "{{ (branch_name ~ package_version) | hash('sha1') }}"
+              commit_message: "{{ commit_message }}"
+
+        - name: End the play here in demo mode
+          ansible.builtin.meta: end_play
+
     - name: Clone application repository
       ansible.builtin.git:
         repo: "{{ app_repo_url }}.git"

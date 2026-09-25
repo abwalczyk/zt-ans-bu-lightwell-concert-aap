@@ -20,25 +20,62 @@
   hosts: localhost
   gather_facts: false
   vars:
-    concert_url: "{{ lookup('env', 'CONCERT_URL') | default('https://concert.example.com') }}"
-    concert_api_key: "{{ lookup('env', 'CONCERT_API_KEY') }}"
+    concert_url: "{{ concert_api_url | default('', true) }}"
+    concert_api_key: "{{ lookup('env', 'CONCERT_API_TOKEN') | default('', true) }}"
+    concert_instance_id: "{{ concert_instance_id | default('0000-0000-0000-0000', true) }}"
     application: "{{ application | default('flask-api-app') }}"
+    demo_mode: "{{ lab_demo_mode | default(true) | bool }}"
+    # Drives the AO routing decision. 0 downstream consumers -> the impact agent
+    # picks auto_update and the workflow runs straight through to the audit
+    # summary. Set to 1 or more to demo the human approval branch instead.
+    demo_downstream_count: "{{ demo_downstream | default(0) | int }}"
 
   tasks:
     - name: Query Concert Arena View for application topology
       ansible.builtin.uri:
-        url: "{{ concert_url }}/api/v1/arena/applications/{{ application }}/topology"
+        url: "{{ concert_url }}/applications/{{ application }}/topology"
         method: GET
         headers:
-          Authorization: "Bearer {{ concert_api_key }}"
+          Authorization: "C_API_KEY {{ concert_api_key }}"
+          InstanceId: "{{ concert_instance_id }}"
           Content-Type: "application/json"
         validate_certs: false
         status_code: 200
       register: concert_topology_response
+      when: not demo_mode
 
     - name: Parse Concert topology response
       ansible.builtin.set_fact:
         topology_data: "{{ concert_topology_response.json }}"
+      when: not demo_mode
+
+    - name: Build representative Concert topology (demo mode)
+      ansible.builtin.set_fact:
+        topology_data:
+          application: "{{ application }}"
+          repository: "{{ app_repo_url | default('https://github.com/labuser/flask-api-app') }}"
+          build_artifacts:
+            - type: container_image
+              image: "{{ container_registry | default('quay.io/labuser') }}/{{ application }}:v1.0.0"
+          deployments:
+            - environment: production
+              namespace: production
+              replicas: 3
+            - environment: staging
+              namespace: staging
+              replicas: 1
+          downstream_dependencies: >-
+            {{ [{'name': 'api-gateway', 'owner_team': 'network-team'}][:demo_downstream_count | int] }}
+      when: demo_mode
+
+    - name: Note that these results are representative
+      ansible.builtin.debug:
+        msg: >-
+          DEMO MODE: Concert Arena View was not queried. Topology is
+          representative lab data ({{ demo_downstream_count }} downstream
+          consumer(s), so AO will route to
+          {{ 'approval_required' if demo_downstream_count | int > 0 else 'auto_update' }}).
+      when: demo_mode
 
     - name: Check for production deployment
       ansible.builtin.set_fact:

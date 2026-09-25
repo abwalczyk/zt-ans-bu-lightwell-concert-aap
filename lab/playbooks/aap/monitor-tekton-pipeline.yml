@@ -14,8 +14,32 @@
     git_commit_sha: "{{ git_commit_sha }}"
     poll_retries: 60
     poll_delay: 10
+    # No OpenShift cluster in config/instances.yaml yet, so k8s_info has nothing
+    # to talk to. Demo mode reports a representative PipelineRun instead.
+    demo_mode: "{{ lab_demo_mode | default(true) | bool }}"
 
   tasks:
+    - name: Simulate a completed Tekton PipelineRun (demo mode)
+      when: demo_mode
+      block:
+        - name: Report the representative PipelineRun
+          ansible.builtin.debug:
+            msg: >-
+              DEMO MODE: no OpenShift cluster is attached to this lab, so the
+              Tekton PipelineRun was not executed. Reporting a representative
+              successful build for commit {{ git_commit_sha }}.
+
+        - name: Set stats for AAP workflow (demo mode)
+          ansible.builtin.set_stats:
+            data:
+              tekton_pipelinerun: "{{ pipeline_name }}-{{ git_commit_sha[:8] | default('abc12345') }}"
+              tekton_status: "success"
+              container_image: >-
+                {{ container_registry | default('quay.io/labuser') }}/{{ app_name | default('flask-api-app') }}@sha256:{{ git_commit_sha | default('demo') | hash('sha256') }}
+
+        - name: End the play here in demo mode
+          ansible.builtin.meta: end_play
+
     - name: Find PipelineRun for this commit
       kubernetes.core.k8s_info:
         api_version: tekton.dev/v1

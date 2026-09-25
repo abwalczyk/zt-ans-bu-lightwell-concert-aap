@@ -21,30 +21,71 @@
   hosts: localhost
   gather_facts: false
   vars:
-    concert_url: "{{ lookup('env', 'CONCERT_URL') | default('https://concert.example.com') }}"
-    concert_api_key: "{{ lookup('env', 'CONCERT_API_KEY') }}"
+    # These arrive as job template extra_vars (see configure-aap.yml) and the
+    # API key arrives as an injected env var from the Concert credential type.
+    # An execution environment sees neither the control VM's env nor its files,
+    # so a bare lookup('env', ...) here would always come back empty.
+    concert_url: "{{ concert_api_url | default('', true) }}"
+    concert_api_key: "{{ lookup('env', 'CONCERT_API_TOKEN') | default('', true) }}"
+    concert_instance_id: "{{ concert_instance_id | default('0000-0000-0000-0000', true) }}"
     package_name: "{{ package_name }}"
     package_version: "{{ package_version }}"
     target_app: "{{ target_app | default('flask-api-app') }}"
+    demo_mode: "{{ lab_demo_mode | default(true) | bool }}"
 
   tasks:
+    # ── Live path ──────────────────────────────────────────────────────
+    # Concert auth is "Authorization: C_API_KEY <key>" plus an InstanceId
+    # header -- not Bearer. Base path is /concert/core/api/v2.
     - name: Query Concert inventory for applications using this package
       ansible.builtin.uri:
-        url: "{{ concert_url }}/api/v1/inventory/packages/{{ package_name }}/applications"
+        url: "{{ concert_url }}/applications"
         method: GET
         headers:
-          Authorization: "Bearer {{ concert_api_key }}"
+          Authorization: "C_API_KEY {{ concert_api_key }}"
+          InstanceId: "{{ concert_instance_id }}"
           Content-Type: "application/json"
-        body_format: json
-        body:
-          older_than: "{{ package_version }}"
         validate_certs: false
         status_code: 200
       register: concert_inventory_response
+      when: not demo_mode
 
     - name: Parse Concert inventory response
       ansible.builtin.set_fact:
         inventory_data: "{{ concert_inventory_response.json }}"
+      when: not demo_mode
+
+    # ── Demo path ──────────────────────────────────────────────────────
+    # Representative portfolio data matching the lab narrative. Shaped exactly
+    # like the live response so the tasks below do not branch.
+    - name: Build representative Concert inventory (demo mode)
+      ansible.builtin.set_fact:
+        inventory_data:
+          package_name: "{{ package_name }}"
+          total_applications: 537
+          total_affected_applications: 12
+          affected_applications:
+            - name: "{{ target_app }}"
+              version: v1.0.0
+              package: "{{ package_name }}"
+              current_version: "{{ current_version | default('5.4.1') }}"
+              repository: "{{ app_repo_url | default('https://github.com/labuser/flask-api-app') }}"
+              owner_team: platform-team
+            - name: payments-api
+              current_version: "5.3.1"
+              owner_team: payments-team
+            - name: reporting-worker
+              current_version: "5.4.1"
+              owner_team: data-team
+      when: demo_mode
+
+    - name: Note that these results are representative
+      ansible.builtin.debug:
+        msg: >-
+          DEMO MODE: Concert was not queried. These SBOM figures are
+          representative lab data. Set CONCERT_DEMO_MODE=false once this
+          lab's SBOM is loaded into Concert.
+      when: demo_mode
 
     - name: Find target application in affected list
       ansible.builtin.set_fact:

@@ -88,6 +88,51 @@
           ao_client_secret: "{{ ao_client_secret }}"
         state: present
 
+    # ── IBM Concert credential ─────────────────────────────────────────
+    # Same execution-environment problem as the AO credential above: the Concert
+    # playbooks run in an EE and cannot read the control VM's environment, so
+    # the API key has to be injected. Concert's scheme is
+    # "Authorization: C_API_KEY <key>" with an InstanceId header -- not Bearer.
+    - name: Create IBM Concert credential type
+      ansible.controller.credential_type:
+        name: "IBM Concert"
+        kind: cloud
+        description: "API key for the shared IBM Concert instance"
+        inputs:
+          fields:
+            - id: concert_api_url
+              type: string
+              label: "Concert API base URL"
+            - id: concert_instance_id
+              type: string
+              label: "Concert instance ID"
+            - id: concert_api_token
+              type: string
+              label: "Concert API key"
+              secret: true
+          required:
+            - concert_api_url
+            - concert_api_token
+        injectors:
+          env:
+            CONCERT_API_URL: "{{ '{{ concert_api_url }}' }}"
+            CONCERT_INSTANCE_ID: "{{ '{{ concert_instance_id }}' }}"
+            CONCERT_API_TOKEN: "{{ '{{ concert_api_token }}' }}"
+        state: present
+
+    - name: Create IBM Concert credential
+      ansible.controller.credential:
+        name: "{{ workshop_concert_credential_name }}"
+        organization: "{{ workshop_org }}"
+        credential_type: "IBM Concert"
+        inputs:
+          concert_api_url: "{{ concert_api_url }}"
+          concert_instance_id: "{{ concert_instance_id }}"
+          concert_api_token: "{{ concert_api_token }}"
+        state: present
+      # Always created, even with an empty key -- the Concert job templates
+      # reference it by name, and in demo mode the key is never used.
+
     # ── Project ────────────────────────────────────────────────────────
     - name: Create Lightwell proactive update lab project
       ansible.controller.project:
@@ -155,12 +200,18 @@
         playbook: lab/playbooks/concert/query-sbom-by-package.yml
         credentials:
           - "{{ workshop_credential_name }}"
+          - "{{ workshop_concert_credential_name }}"
         execution_environment: "{{ workshop_ee_name }}"
         ask_variables_on_launch: true
         extra_vars:
           package_name: "{{ lightwell_package }}"
           package_version: "{{ lightwell_version }}"
           target_app: "{{ target_app }}"
+          current_version: "{{ current_version }}"
+          app_repo_url: "{{ app_repo_url }}"
+          concert_api_url: "{{ concert_api_url }}"
+          concert_instance_id: "{{ concert_instance_id }}"
+          lab_demo_mode: "{{ lab_demo_mode }}"
         state: present
 
     - name: Create job template - Concert Arena View Topology
@@ -173,10 +224,19 @@
         playbook: lab/playbooks/concert/query-topology.yml
         credentials:
           - "{{ workshop_credential_name }}"
+          - "{{ workshop_concert_credential_name }}"
         execution_environment: "{{ workshop_ee_name }}"
         ask_variables_on_launch: true
         extra_vars:
           application: "{{ target_app }}"
+          app_repo_url: "{{ app_repo_url }}"
+          container_registry: "{{ container_registry }}"
+          concert_api_url: "{{ concert_api_url }}"
+          concert_instance_id: "{{ concert_instance_id }}"
+          lab_demo_mode: "{{ lab_demo_mode }}"
+          # Set demo_downstream to 1 or more to route through the approval gate
+          # instead of straight to auto-update.
+          demo_downstream: 0
         state: present
 
     # ── Job Templates - Update Execution ───────────────────────────────
@@ -196,6 +256,7 @@
           package_name: "{{ lightwell_package }}"
           package_version: "{{ lightwell_version }}"
           app_repo_url: "{{ app_repo_url }}"
+          lab_demo_mode: "{{ lab_demo_mode }}"
         state: present
 
     - name: Create job template - Monitor Tekton Pipeline
@@ -214,6 +275,9 @@
         extra_vars:
           tekton_namespace: "{{ tekton_namespace }}"
           pipeline_name: "{{ tekton_pipeline_name }}"
+          app_name: "{{ argocd_app_name }}"
+          container_registry: "{{ container_registry }}"
+          lab_demo_mode: "{{ lab_demo_mode }}"
         state: present
 
     - name: Create job template - Validate Deployment
@@ -236,6 +300,8 @@
           app_namespace: "{{ app_namespace }}"
           argocd_namespace: "{{ argocd_namespace }}"
           app_route: "{{ app_route }}"
+          container_registry: "{{ container_registry }}"
+          lab_demo_mode: "{{ lab_demo_mode }}"
         state: present
 
     # ── Job Templates - Concert Inventory Update ───────────────────────
@@ -249,6 +315,7 @@
         playbook: lab/playbooks/concert/update-inventory.yml
         credentials:
           - "{{ workshop_credential_name }}"
+          - "{{ workshop_concert_credential_name }}"
         execution_environment: "{{ workshop_ee_name }}"
         ask_variables_on_launch: true
         extra_vars:
@@ -256,6 +323,9 @@
           package: "{{ lightwell_package }}"
           previous_version: "{{ current_version }}"
           new_version: "{{ lightwell_version }}"
+          concert_api_url: "{{ concert_api_url }}"
+          concert_instance_id: "{{ concert_instance_id }}"
+          lab_demo_mode: "{{ lab_demo_mode }}"
         state: present
 
     # ── Handoff to Automation Orchestrator ─────────────────────────────

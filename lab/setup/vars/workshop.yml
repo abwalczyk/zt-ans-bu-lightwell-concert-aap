@@ -38,6 +38,7 @@ workshop_inventory_name: "Concert Lab Inventory"
 workshop_credential_name: "Lab Machine Credential"
 workshop_ocp_credential_name: "Lab OpenShift Credential"
 workshop_ao_credential_name: "Lab Automation Orchestrator Credential"
+workshop_concert_credential_name: "Lab IBM Concert Credential"
 workshop_ee_name: "Default execution environment"
 
 # Application source repository
@@ -64,9 +65,26 @@ artifactory_url: "{{ lookup('env', 'ARTIFACTORY_URL') }}"
 artifactory_token: "{{ lookup('env', 'ARTIFACTORY_TOKEN') }}"
 artifactory_lightwell_repo: "lightwell-remediated"
 
-# Concert (shared cloud instance)
-concert_api_url: "{{ lookup('env', 'CONCERT_API_URL') }}"
+# ── IBM Concert (shared instance) ────────────────────────────────────────
+# Real API contract, read off the "API key" dialog in the Concert console:
+#   base:    https://<host>:12443/concert/core/api/v2
+#   headers: Authorization: C_API_KEY <key>
+#            InstanceId: <instance id>
+# Note the auth scheme is C_API_KEY, NOT Bearer, and InstanceId is required.
+concert_api_url: "{{ lookup('env', 'CONCERT_API_URL') | default('https://44.254.16.41:12443/concert/core/api/v2', true) }}"
 concert_api_token: "{{ lookup('env', 'CONCERT_API_TOKEN') }}"
+concert_instance_id: "{{ lookup('env', 'CONCERT_INSTANCE_ID') | default('0000-0000-0000-0000', true) }}"
+
+# Demo mode: emit representative SBOM/topology/build/deploy results instead of
+# calling Concert, Tekton and ArgoCD. Defaults ON because:
+#   - the shared Concert instance is loaded with juice-shop data, so a query for
+#     pyyaml in flask-api-app legitimately returns nothing
+#   - there is no OpenShift cluster in config/instances.yaml yet, so the Tekton
+#     and ArgoCD nodes have nothing to talk to
+# Every playbook still emits the same set_stats keys, so the AO workflow runs
+# end to end and each node reports real-looking data. Set CONCERT_DEMO_MODE=false
+# once Concert holds this lab's SBOM and the OCP cluster exists.
+lab_demo_mode: "{{ lookup('env', 'CONCERT_DEMO_MODE') | default('true', true) | bool }}"
 
 # ── Automation Orchestrator (shared instance, one per-student workflow) ──
 # AO lives outside the lab topology. Each student's provisioning run registers

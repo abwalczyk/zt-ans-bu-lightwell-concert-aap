@@ -35,5 +35,6 @@
               artifact_url: "{{ event.payload.artifact_url | default('') }}"
               artifact_checksum: "{{ event.payload.checksum | default('') }}"
               source_repository: "{{ event.payload.repository }}"
+              target_app: "{{ event.payload.target_app | default('flask-api-app') }}"
               fixes_cve: "{{ event.payload.remediation_info.fixes_cve | default('') }}"
               severity: "{{ event.payload.remediation_info.severity | default('unknown') }}"

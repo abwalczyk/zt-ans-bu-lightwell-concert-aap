@@ -14,8 +14,34 @@
     app_namespace: "{{ app_namespace | default('production') }}"
     argocd_namespace: "{{ argocd_namespace | default('openshift-gitops') }}"
     app_route: "{{ app_route | default('https://flask-api-app.apps.ocp.example.com') }}"
+    # No OpenShift cluster yet, so ArgoCD and the deployed app do not exist.
+    demo_mode: "{{ lab_demo_mode | default(true) | bool }}"
 
   tasks:
+    - name: Report a representative successful validation (demo mode)
+      when: demo_mode
+      block:
+        - name: Explain what was not checked
+          ansible.builtin.debug:
+            msg: >-
+              DEMO MODE: no OpenShift cluster is attached to this lab, so ArgoCD
+              sync and the live application health check were not performed.
+              Reporting a representative successful validation of
+              {{ package_name }} {{ expected_version }} in {{ app_name }}.
+
+        - name: Set validation stats (demo mode)
+          ansible.builtin.set_stats:
+            data:
+              validation_status: "success"
+              deployed_version: "{{ expected_version }}"
+              running_image: "{{ container_image | default(container_registry | default('quay.io/labuser') ~ '/' ~ app_name ~ ':demo') }}"
+              argocd_sync_status: "Synced"
+              argocd_revision: "{{ git_commit_sha | default('demo-revision') }}"
+              validation_timestamp: "{{ ansible_date_time.iso8601 }}"
+
+        - name: End the play here in demo mode
+          ansible.builtin.meta: end_play
+
     - name: Wait for ArgoCD Application to be Synced and Healthy
       kubernetes.core.k8s_info:
         api_version: argoproj.io/v1alpha1

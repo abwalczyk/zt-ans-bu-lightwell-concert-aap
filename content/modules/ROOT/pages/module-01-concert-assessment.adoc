@@ -130,12 +130,14 @@ curl -X POST http://localhost:5000/webhook \
   -d '{
     "package_name": "pyyaml",
     "package_version": "6.0.2",
+    "previous_version": "5.4.1",
+    "target_app": "flask-api-app",
     "artifact_id": "pyyaml-6.0.2.rhlw-00456",
     "artifact_url": "https://artifactory.example.com/lightwell-remediated/pyyaml-6.0.2.rhlw-00456",
     "checksum": "sha256:abc123def456",
     "repository": "lightwell-remediated",
     "remediation_info": {
-      "fixes_cve": ["CVE-2026-52891"],
+      "fixes_cve": "CVE-2026-52891",
       "severity": "critical"
     }
   }'

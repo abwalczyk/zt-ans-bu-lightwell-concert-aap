@@ -1,7 +1,15 @@
 ---
+# Consumed by the AAP project sync only (the control VM builds its own list in
+# setup-automation/tasks/setup-control.yml).
+#
+# Do NOT add ansible.controller here. Project updates run in an execution
+# environment whose only galaxy server is the organization's public
+# galaxy.ansible.com credential -- the ~/.ansible.cfg Automation Hub token
+# written by setup-control.yml lives on the control VM and is not mounted into
+# the container. ansible.controller is Red Hat certified content that exists
+# only on Automation Hub, so installing it from public Galaxy 404s and fails
+# the whole project update. It is already baked into ee-supported-rhel9.
 collections:
-  - name: ansible.controller
-    version: ">=4.5.0"
   - name: ansible.posix
     version: ">=1.5.0"
   - name: community.general

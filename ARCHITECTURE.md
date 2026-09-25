@@ -290,6 +290,48 @@ by hand against an old `LAB_ID`.
 
 ---
 
+## Demo Mode
+
+`lab_demo_mode` (env `CONCERT_DEMO_MODE`, **default `true`**) makes the six AAP
+playbooks report representative results instead of calling a backing service.
+It exists because two dependencies are not in place yet:
+
+- The shared Concert instance is loaded with `juice-shop` data, so a query for
+  `pyyaml` in `flask-api-app` legitimately returns nothing.
+- `config/instances.yaml` provisions no OpenShift cluster, so the Tekton and
+  ArgoCD nodes have nothing to talk to.
+
+Each playbook emits the **same `set_stats` keys** either way, so the AO workflow
+is unchanged and runs end to end with every node reporting plausible data. Each
+demo-mode playbook also prints a `DEMO MODE:` line naming exactly what it did
+not do, so the job output never misrepresents itself.
+
+Set `CONCERT_DEMO_MODE=false` once this lab's SBOM is in Concert and the OCP
+cluster exists. Nothing else changes.
+
+`demo_downstream` (extra_var on **Concert - Query Topology**, default `0`)
+controls the routing branch: `0` downstream consumers routes to `auto_update`
+and runs straight through to the audit summary; `1` or more routes through the
+human approval gate.
+
+### Concert API contract
+
+Read off the **API key** dialog in the Concert console:
+
+```
+base:    https://<host>:12443/concert/core/api/v2
+headers: Authorization: C_API_KEY <key>
+         InstanceId: <instance id>
+```
+
+The scheme is `C_API_KEY`, **not** `Bearer`, and `InstanceId` is required. The
+key is delivered to the execution environments by the **IBM Concert** custom
+credential type (`configure-aap.yml`), which injects `CONCERT_API_URL`,
+`CONCERT_INSTANCE_ID` and `CONCERT_API_TOKEN` — an EE cannot read the control
+VM's environment, so a plain `lookup('env', ...)` would always be empty.
+
+---
+
 ## For Partners/Customers
 
 **When to use Concert:**

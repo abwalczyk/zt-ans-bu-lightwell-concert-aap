@@ -15,22 +15,36 @@
   hosts: localhost
   gather_facts: true
   vars:
-    concert_url: "{{ lookup('env', 'CONCERT_URL') | default('https://concert.example.com') }}"
-    concert_api_key: "{{ lookup('env', 'CONCERT_API_KEY') }}"
-    application: "{{ application }}"
-    package: "{{ package }}"
+    concert_url: "{{ concert_api_url | default('', true) }}"
+    concert_api_key: "{{ lookup('env', 'CONCERT_API_TOKEN') | default('', true) }}"
+    concert_instance_id: "{{ concert_instance_id | default('0000-0000-0000-0000', true) }}"
+    # The AO node sends package_name and no application, so fall back to the
+    # trigger's package and the lab's target app rather than failing undefined.
+    application: "{{ application | default(target_app) | default('flask-api-app', true) }}"
+    package: "{{ package | default(package_name) | default('pyyaml', true) }}"
     previous_version: "{{ previous_version }}"
     new_version: "{{ new_version }}"
     validation_passed: "{{ validation_passed | default(false) }}"
     container_image: "{{ container_image | default('') }}"
+    demo_mode: "{{ lab_demo_mode | default(true) | bool }}"
 
   tasks:
+    - name: Report the SBOM write-back without calling Concert (demo mode)
+      ansible.builtin.debug:
+        msg: >-
+          DEMO MODE: Concert was not written to. A live run would PATCH
+          {{ application }}'s SBOM to record {{ package }}
+          {{ previous_version }} -> {{ new_version }}, closing the loop so the
+          next portfolio query reflects the new version.
+      when: demo_mode
+
     - name: Update Concert inventory with new SBOM data
       ansible.builtin.uri:
-        url: "{{ concert_url }}/api/v1/inventory/applications/{{ application }}/sbom"
+        url: "{{ concert_url }}/applications/{{ application }}/sbom"
         method: PATCH
         headers:
-          Authorization: "Bearer {{ concert_api_key }}"
+          Authorization: "C_API_KEY {{ concert_api_key }}"
+          InstanceId: "{{ concert_instance_id }}"
           Content-Type: "application/json"
         body_format: json
         body:
@@ -44,6 +58,7 @@
         validate_certs: false
         status_code: [200, 204]
       register: concert_update_response
+      when: not demo_mode
 
     - name: Display Concert inventory update results
       ansible.builtin.debug:
