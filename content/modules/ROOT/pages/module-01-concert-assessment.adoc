@@ -166,10 +166,21 @@ Note what this payload carries: the artifact ID, URL, and checksum are all prese
 . Find the new event for the pyyaml package. You should see something like:
 +
 * **Event**: pyyaml 6.0.2 published to `lightwell-remediated`
-* **Action**: Triggered workflow `Lightwell Proactive Update Orchestrator`
+* **Action**: Ran job template `AO - Trigger Proactive Update Workflow`
 * **Timestamp**: Just now
 
-. Click the linked job to open the Automation Orchestrator workflow run.
+. Click the linked job. It is a one-task relay: it POSTs the package event to the
+  Automation Orchestrator webhook. The job output prints the AO workflow URL.
+
+. Open that URL to watch the Automation Orchestrator workflow run.
++
+[NOTE]
+====
+EDA Controller cannot call an HTTP endpoint directly — its rulebook actions launch
+templates, not requests. That is why the handoff to AO is a job template rather
+than a single hop. The upside is that the handoff shows up in the AAP job list,
+which is the first place to look if AO never starts.
+====
 
 ==== Verify
 
@@ -302,7 +313,7 @@ The decision logic lives in Automation Orchestrator, not Concert. That separatio
 You've completed Module 1! Here's what happened:
 
 1. **Lightwell published a package** → Artifactory sent a webhook to EDA
-2. **Event-Driven Ansible received the event** → Triggered the Lightwell Proactive Update Orchestrator workflow
+2. **Event-Driven Ansible received the event** → Relayed it to the Automation Orchestrator webhook
 3. **Automation Orchestrator queried Concert SBOM** → "Which apps are still on an older version?"
 4. **Concert answered instantly** → 12 of 537 applications, including flask-api-app
 5. **Automation Orchestrator queried Concert Arena View** → Production deployment, 1 downstream dependency

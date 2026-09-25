@@ -1,0 +1,87 @@
+---
+# Relay the Artifactory package-published event from EDA into Automation
+# Orchestrator.
+#
+# EDA Controller has no native "call an HTTP endpoint" action -- its rulebook
+# actions run job templates, workflow templates or modules. So the hop from EDA
+# to AO is a deliberately thin AAP job template that does one POST to the AO
+# webhook. Keeping it as a job template rather than a run_module action means
+# the handoff shows up in the AAP job list, which is where students go looking
+# when the workflow does not start.
+#
+# Launched by: the EDA rulebook extensions/eda/rulebooks/lightwell-package-alert.yml
+# Targets:     the AO eda_trigger created by lab/setup/configure-ao.yml
+
+- name: Trigger the AO proactive update workflow
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  vars_files:
+    - ../../setup/vars/workshop.yml
+
+  vars:
+    ao_api: "{{ ao_url }}/api/v1"
+
+  tasks:
+    # ao_webhook_path, ao_workflow_id and friends are stamped onto this job
+    # template's extra_vars by configure-ao.yml once the workflow is published.
+    # ao_url / ao_client_id / ao_client_secret arrive as environment variables
+    # from the "Automation Orchestrator" credential attached to this template.
+    - name: Assert the AO binding is present
+      ansible.builtin.assert:
+        that:
+          - ao_webhook_path | default('') | length > 0
+          - ao_client_id | length > 0
+          - ao_client_secret | length > 0
+        fail_msg: >-
+          This job template is not bound to an AO workflow. Run
+          lab/setup/configure-ao.yml, which publishes the workflow and stamps
+          the webhook path and AO credential onto this template.
+        quiet: true
+
+    - name: Exchange AO service account credentials for a bearer token
+      ansible.builtin.uri:
+        url: "{{ ao_api }}/auth/token"
+        method: POST
+        headers:
+          Content-Type: application/x-www-form-urlencoded
+        body: >-
+          grant_type=client_credentials&client_id={{ ao_client_id | urlencode }}&client_secret={{ ao_client_secret | urlencode }}
+        status_code: [200]
+      register: _ao_token
+      no_log: true
+
+    # The AO trigger authorizes this service account explicitly
+    # (authorized_service_account_ids), so the bearer token is what gets the
+    # event past the webhook receiver.
+    - name: POST the package event to the AO workflow webhook
+      ansible.builtin.uri:
+        url: "{{ ao_api }}/webhooks/{{ ao_webhook_path }}"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ _ao_token.json.access_token }}"
+          Content-Type: application/json
+        body_format: json
+        body:
+          package_name: "{{ package_name }}"
+          package_version: "{{ package_version }}"
+          previous_version: "{{ previous_version | default(current_version) }}"
+          artifact_id: "{{ artifact_id | default('') }}"
+          repository: "{{ source_repository | default(artifactory_lightwell_repo) }}"
+          artifact_url: "{{ artifact_url | default('') }}"
+          checksum: "{{ artifact_checksum | default('') }}"
+          fixes_cve: "{{ fixes_cve | default('') }}"
+          severity: "{{ severity | default('unknown') }}"
+          target_app: "{{ target_app }}"
+        status_code: [200, 201, 202]
+      register: _ao_trigger
+
+    - name: Report the AO handoff
+      ansible.builtin.debug:
+        msg:
+          - "Handed off to Automation Orchestrator."
+          - "Workflow: {{ ao_workflow_name }}"
+          - "Webhook:  {{ ao_api }}/webhooks/{{ ao_webhook_path }}"
+          - "Watch it run: {{ ao_url }}/workflow-builder/{{ ao_workflow_id | default('') }}"
+          - "AO response: {{ _ao_trigger.json | default(_ao_trigger.status) }}"

@@ -230,6 +230,66 @@ else:
 
 ---
 
+## How the Lab Binds to Automation Orchestrator
+
+AO is **not part of the lab topology**. `config/instances.yaml` stands up a
+Gitea container, a `control` VM and `rhel01` — there is no AO node. AO is a
+shared instance that many labs register against, so each student's environment
+has to introduce itself to AO at provision time, over the API.
+
+That is what `lab/setup/configure-ao.yml` does, as Phase 2b of
+`lab/setup/main.yml` (after AAP, because it resolves job templates by name):
+
+1. Exchange the lab service account's `client_credentials` for a bearer token
+   (`POST /api/v1/auth/token`, form-encoded — it is the only supported grant).
+2. Create an AO credential holding this lab's AAP admin login, then an
+   `ansible_automation_platform` integration pointing at the lab's **public**
+   control route.
+3. Poll the integration until `validation_status == "valid"` — this is the step
+   that proves AO can actually reach the student's AAP.
+4. `GET /api/v1/aap/job_templates?integration_id=…` and map the six job template
+   names to whatever IDs this particular AAP assigned.
+5. Render `lab/ao/lightwell-proactive-update.json` with those IDs, this lab's
+   integration and credential, and a lab-scoped webhook path.
+6. `POST /api/v1/workflows`, then publish the resulting version — a draft
+   workflow's trigger is not live.
+7. Stamp the webhook path onto the "AO - Trigger Proactive Update Workflow" job
+   template so EDA's relay knows where to send events.
+
+**Required environment variables.** `config/secrets.yaml` is tracked in git, so
+nothing here may go in it. These follow the same `lookup('env', ...)` pattern as
+`OCP_TOKEN` and `ARTIFACTORY_TOKEN`:
+
+| Variable | Required? | What it is |
+|---|---|---|
+| `AO_CLIENT_ID` | **yes** | Service account client ID |
+| `AO_CLIENT_SECRET` | **yes** | Service account client secret |
+| `AO_URL` | no | AO base URL; defaults to the shared instance |
+| `AAP_PUBLIC_URL` | no | Override for the control route; see below |
+| `LAB_ID` | no | AO object name suffix; defaults to `GUID` |
+
+Only the two service account values actually need setting. The public AAP URL is
+derived from `GUID` and `DOMAIN`, which provisioning already has, as
+`https://control-${guid}.${domain}` — the exact URL the Showroom **AAP** tab
+points at (`ui-config.yml`). It is a public RHDP route, so the AO host can reach
+it; other labs on this AO instance are registered the same way.
+
+If `AO_CLIENT_ID` is unset, `configure-ao.yml` **skips itself** and the lab build
+still succeeds — you get the AAP fallback workflow but no AO orchestration.
+
+`AO_CLIENT_ID` / `AO_CLIENT_SECRET` belong to **one service account created by
+hand, once**, on the AO instance — a lab cannot bootstrap its own AO identity.
+That same service account is what the workflow's `eda_trigger` authorizes via
+`authorized_service_account_ids`, so it is both the provisioner and the caller.
+
+**Multi-student caveat.** Every lab leaves a workflow, an integration and a
+credential on the shared AO instance, all named for `lab_id`. Nothing reaps
+them, and a stale integration shows `validation_status: "error"` in the AO
+console once its AAP disappears. Run `lab/setup/teardown-ao.yml` on teardown, or
+by hand against an old `LAB_ID`.
+
+---
+
 ## For Partners/Customers
 
 **When to use Concert:**

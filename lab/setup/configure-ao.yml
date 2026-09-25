@@ -1,0 +1,461 @@
+---
+# Bind this student's lab to the shared Automation Orchestrator instance.
+#
+# AO is not part of the lab topology (see config/instances.yaml) -- it is a
+# shared instance that many labs register against. This playbook makes the
+# student's environment a first-class citizen on it, entirely over the REST API:
+#
+#   1. Exchange the lab service account's client_credentials for a bearer token
+#   2. Register this lab's AAP as an AO integration (credential + integration)
+#   3. Wait for AO to validate it can actually reach that AAP
+#   4. Resolve the six job template IDs AO needs, by name
+#   5. Render lab/ao/lightwell-proactive-update.json with the real IDs
+#   6. Create and publish the workflow, then report its webhook URL
+#
+# Everything created here is suffixed with lab_id so students sharing the AO
+# instance do not collide. See the teardown note at the bottom.
+
+- name: Bind lab to Automation Orchestrator
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  vars_files:
+    - vars/workshop.yml
+
+  module_defaults:
+    group/ansible.controller.controller:
+      controller_host: "{{ aap_host }}"
+      controller_username: "{{ aap_user }}"
+      controller_password: "{{ aap_password }}"
+      validate_certs: false
+
+  vars:
+    ao_api: "{{ ao_url }}/api/v1"
+    ao_workflow_template: "{{ playbook_dir }}/../ao/lightwell-proactive-update.json"
+    # AO reports integration health asynchronously; it probes the AAP base_url
+    # in the background after the integration is created.
+    ao_validation_retries: 30
+    ao_validation_delay: 10
+    # AO caps "limit" at 100; anything higher returns an empty page.
+    ao_page_limit: 100
+
+  tasks:
+    # ── Preflight ──────────────────────────────────────────────────────
+    # If the AO service account is not configured, skip the whole binding
+    # rather than failing the lab build. The AAP fallback workflow still
+    # provisions, so the lab remains demonstrable end to end without AO.
+    - name: Decide whether AO binding can run
+      ansible.builtin.set_fact:
+        ao_binding_enabled: >-
+          {{ (ao_client_id | length > 0) and (ao_client_secret | length > 0) }}
+
+    - name: Skip AO binding when no service account is configured
+      ansible.builtin.debug:
+        msg:
+          - "AO_CLIENT_ID / AO_CLIENT_SECRET are not set -- skipping AO binding."
+          - "The lab will still work via the AAP fallback workflow"
+          - "\"Lightwell Proactive Update Orchestrator (AAP fallback)\", but EDA"
+          - "points at the AO relay, so nothing will fire until AO is bound."
+          - "Create a service account on {{ ao_url }} and re-run this playbook."
+      when: not ao_binding_enabled
+
+    - name: Bind this lab to Automation Orchestrator
+      when: ao_binding_enabled
+      block:
+        - name: Assert the public AAP URL resolved
+          ansible.builtin.assert:
+            that:
+              - ao_aap_public_url | length > 0
+              - "'localhost' not in ao_aap_public_url"
+            fail_msg: >-
+              Could not work out this lab's public AAP URL
+              (got "{{ ao_aap_public_url }}"). It is normally derived from GUID
+              and DOMAIN as https://control-<guid>.<domain> -- the same URL the
+              Showroom "AAP" tab uses. Set AAP_PUBLIC_URL to override. AO runs
+              outside this lab and cannot reach https://localhost.
+            quiet: true
+
+        # Catch an unreachable route here, with a clear message, rather than
+        # letting it surface later as an opaque AO validation timeout.
+        - name: Check the public AAP route answers
+          ansible.builtin.uri:
+            url: "{{ ao_aap_public_url }}/api/controller/v2/ping/"
+            validate_certs: false
+            status_code: [200]
+          register: _aap_public_ping
+          retries: 12
+          delay: 10
+          until: _aap_public_ping is succeeded
+          failed_when: false
+
+        - name: Warn if the public AAP route did not answer
+          ansible.builtin.debug:
+            msg: >-
+              {{ ao_aap_public_url }} did not answer a controller ping
+              (status {{ _aap_public_ping.status | default('none') }}). AO will
+              probably fail to validate the integration. Continuing anyway.
+          when: _aap_public_ping.status | default(0) != 200
+
+        - name: Confirm the AO workflow template exists
+          ansible.builtin.stat:
+            path: "{{ ao_workflow_template }}"
+          register: _ao_template_stat
+
+        - name: Fail if the AO workflow template is missing
+          ansible.builtin.fail:
+            msg: "AO workflow template not found at {{ ao_workflow_template }}"
+          when: not _ao_template_stat.stat.exists
+
+        # ── Authenticate ───────────────────────────────────────────────────
+        # AO's token endpoint is OAuth2 client_credentials and is form-encoded --
+        # it rejects a JSON body with "grant_type: Field required", and it is the
+        # only supported grant (password returns unsupported_grant_type).
+        - name: Exchange AO service account credentials for a bearer token
+          ansible.builtin.uri:
+            url: "{{ ao_api }}/auth/token"
+            method: POST
+            headers:
+              Content-Type: application/x-www-form-urlencoded
+            body: >-
+              grant_type=client_credentials&client_id={{ ao_client_id | urlencode }}&client_secret={{ ao_client_secret | urlencode }}
+            status_code: [200]
+          register: _ao_token
+          no_log: true
+          retries: 10
+          delay: 6
+          until: _ao_token is succeeded
+
+        - name: Set AO authorization header
+          ansible.builtin.set_fact:
+            ao_headers:
+              Authorization: "Bearer {{ _ao_token.json.access_token }}"
+              Content-Type: application/json
+          no_log: true
+
+        # ── Resolve shared AO objects ──────────────────────────────────────
+        # AO list endpoints return a cursor-paginated envelope:
+        #   {"resources": [...], "next": <cursor|null>, "prev": ..., "total": ...}
+        # Two traps, both confirmed against the live instance:
+        #   - the page defaults to 20 items, and "limit" is the only accepted
+        #     page-size parameter -- any other name (page_size, per_page, size)
+        #     is ignored and silently returns an EMPTY list, not an error
+        #   - limit is capped at 100; limit=101 also returns an empty list
+        - name: List AO projects
+          ansible.builtin.uri:
+            url: "{{ ao_api }}/projects?limit={{ ao_page_limit }}"
+            headers: "{{ ao_headers }}"
+            status_code: [200]
+          register: _ao_projects
+
+        - name: Set AO project ID
+          ansible.builtin.set_fact:
+            ao_project_id: >-
+              {{ (_ao_projects.json.resources if (_ao_projects.json is mapping and 'resources' in _ao_projects.json)
+                  else _ao_projects.json)
+                 | selectattr('name', 'equalto', ao_project_name)
+                 | map(attribute='id') | first }}
+
+        - name: List AO credential types
+          ansible.builtin.uri:
+            url: "{{ ao_api }}/credential_types?limit={{ ao_page_limit }}"
+            headers: "{{ ao_headers }}"
+            status_code: [200]
+          register: _ao_cred_types
+
+        - name: Set AAP credential type ID
+          ansible.builtin.set_fact:
+            ao_aap_cred_type_id: >-
+              {{ (_ao_cred_types.json.resources if (_ao_cred_types.json is mapping and 'resources' in _ao_cred_types.json)
+                  else _ao_cred_types.json)
+                 | selectattr('name', 'equalto', 'Ansible Automation Platform')
+                 | map(attribute='id') | first }}
+
+        # The service account we authenticated as is also the identity allowed to
+        # POST to this workflow's webhook, so the trigger needs its ID.
+        - name: Look up this service account
+          ansible.builtin.uri:
+            url: "{{ ao_api }}/service_accounts?limit={{ ao_page_limit }}"
+            headers: "{{ ao_headers }}"
+            status_code: [200]
+          register: _ao_service_accounts
+
+        - name: Set AO service account ID
+          ansible.builtin.set_fact:
+            ao_service_account_id: >-
+              {{ (_ao_service_accounts.json.resources if (_ao_service_accounts.json is mapping and 'resources' in _ao_service_accounts.json)
+                  else _ao_service_accounts.json)
+                 | selectattr('name', 'equalto', ao_service_account_name)
+                 | map(attribute='id') | first }}
+
+        # ── Register this lab's AAP ────────────────────────────────────────
+        - name: Create AO credential for this lab's AAP
+          ansible.builtin.uri:
+            url: "{{ ao_api }}/credentials"
+            method: POST
+            headers: "{{ ao_headers }}"
+            body_format: json
+            body:
+              name: "{{ ao_credential_name }}"
+              description: "AAP admin credential for Lightwell lab {{ lab_id }}"
+              project_id: "{{ ao_project_id }}"
+              credential_type_id: "{{ ao_aap_cred_type_id }}"
+              inputs:
+                username: "{{ aap_user }}"
+                password: "{{ aap_password }}"
+            status_code: [200, 201]
+          register: _ao_credential
+          no_log: true
+
+        - name: Create AO integration pointing at this lab's AAP
+          ansible.builtin.uri:
+            url: "{{ ao_api }}/integrations"
+            method: POST
+            headers: "{{ ao_headers }}"
+            body_format: json
+            body:
+              name: "{{ ao_integration_name }}"
+              description: "Ansible Automation Platform for Lightwell lab {{ lab_id }}"
+              integration_type: ansible_automation_platform
+              enabled: true
+              scope: global
+              configuration:
+                integration_type: ansible_automation_platform
+                base_url: "{{ ao_aap_public_url }}"
+                allow_http: false
+                # Lab AAP serves a self-signed certificate.
+                insecure_skip_tls_verify: true
+                ca_certificate: null
+              management_credential_id: "{{ _ao_credential.json.id }}"
+            status_code: [200, 201]
+          register: _ao_integration
+
+        - name: Set AO integration ID
+          ansible.builtin.set_fact:
+            ao_integration_id: "{{ _ao_integration.json.id }}"
+
+        # AO probes the AAP asynchronously. If this never reaches "valid" the
+        # cause is almost always AAP_PUBLIC_URL not being reachable from AO.
+        - name: Wait for AO to validate it can reach this lab's AAP
+          ansible.builtin.uri:
+            url: "{{ ao_api }}/integrations/{{ ao_integration_id }}"
+            headers: "{{ ao_headers }}"
+            status_code: [200]
+          register: _ao_integration_state
+          retries: "{{ ao_validation_retries }}"
+          delay: "{{ ao_validation_delay }}"
+          until: _ao_integration_state.json.validation_status == 'valid'
+          failed_when: false
+
+        - name: Report integration validation failure
+          ansible.builtin.fail:
+            msg: >-
+              AO could not reach this lab's AAP at {{ ao_aap_public_url }}
+              (validation_status={{ _ao_integration_state.json.validation_status | default('unknown') }},
+              error={{ _ao_integration_state.json.validation_error | default('none') }}).
+              Confirm the control route is published externally and that AAP is up.
+          when: _ao_integration_state.json.validation_status | default('') != 'valid'
+
+        # ── Resolve job template IDs ───────────────────────────────────────
+        # The committed workflow template carries placeholder IDs 9001-9006 plus the
+        # real job_template_name. configure-aap.yml created those templates on this
+        # lab's AAP; AO now sees them through the integration, so we can swap the
+        # placeholders for whatever IDs this particular AAP assigned.
+        - name: List job templates AO can see on this lab's AAP
+          ansible.builtin.uri:
+            url: "{{ ao_api }}/aap/job_templates?integration_id={{ ao_integration_id }}&limit={{ ao_page_limit }}"
+            headers: "{{ ao_headers }}"
+            # 503 AAP_NOT_CONFIGURED comes back as a problem+json body rather
+            # than a list; accept it here so the next task can explain it.
+            status_code: [200, 503]
+          register: _ao_job_templates
+
+        - name: Unwrap the job template list
+          ansible.builtin.set_fact:
+            _ao_jt_list: >-
+              {{ _ao_job_templates.json.resources
+                 if (_ao_job_templates.json is mapping and 'resources' in _ao_job_templates.json)
+                 else (_ao_job_templates.json if _ao_job_templates.json is sequence
+                       and _ao_job_templates.json is not string else []) }}
+
+        # An empty list here is never legitimate -- configure-aap.yml has just
+        # created six templates on this AAP. Catch it now with the AO error text
+        # rather than six confusing "no such job template" asserts below.
+        - name: Fail if AO cannot enumerate this lab's job templates
+          ansible.builtin.fail:
+            msg: >-
+              AO returned no job templates for integration {{ ao_integration_id }}
+              ({{ ao_integration_name }}).
+              AO said: {{ _ao_job_templates.json.title | default('(no error title)') }} --
+              {{ _ao_job_templates.json.detail | default('(no detail)') }}
+              Check that the integration is enabled and validated, and that the
+              service account's role covers this project.
+          when: _ao_jt_list | length == 0
+
+        - name: Build job template name to ID map
+          ansible.builtin.set_fact:
+            ao_jt_map: >-
+              {{ dict(_ao_jt_list | map(attribute='name')
+                 | zip(_ao_jt_list | map(attribute='id'))) }}
+
+        - name: Load the AO workflow template
+          ansible.builtin.set_fact:
+            ao_workflow_def: "{{ lookup('file', ao_workflow_template) | from_json }}"
+
+        - name: Assert every AAP node in the workflow resolves to a real job template
+          ansible.builtin.assert:
+            that:
+              - item.parameters.job_template_name in ao_jt_map
+            fail_msg: >-
+              AO cannot see a job template named "{{ item.parameters.job_template_name }}"
+              on this lab's AAP. configure-aap.yml must run before configure-ao.yml.
+            quiet: true
+          loop: "{{ ao_workflow_def.nodes | selectattr('type', 'equalto', 'aap_job_template') | list }}"
+          loop_control:
+            label: "{{ item.parameters.job_template_name }}"
+
+        # ── Render the per-student workflow ────────────────────────────────
+        # Three substitutions: AAP nodes get this lab's integration, credential and
+        # real job template ID; agentic nodes get the shared AO LLM; the trigger gets
+        # a lab-scoped webhook path and this service account as its caller.
+        - name: Rewrite AAP nodes to bind to this lab
+          ansible.builtin.set_fact:
+            _ao_nodes: >-
+              {{ _ao_nodes | default([]) + [
+                   item | combine({'parameters': item.parameters | combine({
+                     'integration_id': ao_integration_id,
+                     'credential_id': _ao_credential.json.id,
+                     'job_template_id': ao_jt_map[item.parameters.job_template_name]
+                   })}) if item.type == 'aap_job_template'
+                   else (item | combine({'parameters': item.parameters | combine({
+                     'llm_model_id': ao_llm_model_id,
+                     'credential_id': ao_llm_credential_id
+                   })}) if item.type == 'agentic' else item)
+                 ] }}
+          loop: "{{ ao_workflow_def.nodes }}"
+          loop_control:
+            label: "{{ item.id }}"
+
+        - name: Rewrite the trigger for this lab's webhook path
+          ansible.builtin.set_fact:
+            _ao_triggers: >-
+              {{ [ao_workflow_def.triggers[0] | combine({
+                   'parameters': ao_workflow_def.triggers[0].parameters | combine({
+                     'webhook_path': ao_webhook_path,
+                     'authorized_service_account_ids': [ao_service_account_id]
+                   })
+                 })] }}
+
+        - name: Assemble the per-student workflow definition
+          ansible.builtin.set_fact:
+            ao_rendered_workflow: >-
+              {{ ao_workflow_def | combine({
+                   'name': ao_workflow_name,
+                   'triggers': _ao_triggers,
+                   'nodes': _ao_nodes
+                 }) }}
+
+        # Cheap insurance: AO validates the definition server-side before we commit
+        # to creating anything, and its error messages are far better than the
+        # failures you get from a published-but-broken workflow.
+        - name: Validate the rendered workflow with AO
+          ansible.builtin.uri:
+            url: "{{ ao_api }}/workflows/validate"
+            method: POST
+            headers: "{{ ao_headers }}"
+            body_format: json
+            body:
+              workflow_definition: "{{ ao_rendered_workflow }}"
+            status_code: [200, 201]
+          register: _ao_validate
+
+        # ── Create and publish ─────────────────────────────────────────────
+        - name: Create the workflow on AO
+          ansible.builtin.uri:
+            url: "{{ ao_api }}/workflows"
+            method: POST
+            headers: "{{ ao_headers }}"
+            body_format: json
+            body:
+              name: "{{ ao_workflow_name }}"
+              project_id: "{{ ao_project_id }}"
+              workflow_definition: "{{ ao_rendered_workflow }}"
+            status_code: [200, 201]
+          register: _ao_workflow
+
+        - name: Set AO workflow ID
+          ansible.builtin.set_fact:
+            ao_workflow_id: "{{ _ao_workflow.json.id }}"
+
+        - name: Read back the workflow to get its draft version ID
+          ansible.builtin.uri:
+            url: "{{ ao_api }}/workflows/{{ ao_workflow_id }}"
+            headers: "{{ ao_headers }}"
+            status_code: [200]
+          register: _ao_workflow_read
+
+        # A draft workflow cannot be launched by a webhook -- publishing is what
+        # makes the trigger live.
+        - name: Publish the workflow
+          ansible.builtin.uri:
+            url: "{{ ao_api }}/workflows/{{ ao_workflow_id }}/versions/{{ _ao_workflow_read.json.version.id }}/publish"
+            method: POST
+            headers: "{{ ao_headers }}"
+            status_code: [200, 201, 204]
+          register: _ao_publish
+
+        # ── Hand off to EDA ────────────────────────────────────────────────
+        # The relay job template runs in an execution environment, so it cannot read
+        # anything from this host. Stamp the binding onto the template itself --
+        # extra_vars travel into the EE, and they are non-secret (the AO client
+        # credentials go in separately, through the AO credential type).
+        - name: Bind the AO relay job template to the published workflow
+          ansible.controller.job_template:
+            name: "AO - Trigger Proactive Update Workflow"
+            organization: "{{ workshop_org }}"
+            ask_variables_on_launch: true
+            extra_vars:
+              package_name: "{{ lightwell_package }}"
+              package_version: "{{ lightwell_version }}"
+              target_app: "{{ target_app }}"
+              ao_workflow_id: "{{ ao_workflow_id }}"
+              ao_workflow_name: "{{ ao_workflow_name }}"
+              ao_webhook_path: "{{ ao_webhook_path }}"
+            state: present
+
+        # Also drop the binding on the control VM, so the lab guide and anyone
+        # debugging from the Terminal tab can see where the events are going.
+        - name: Ensure the lab fact directory exists
+          ansible.builtin.file:
+            path: /etc/lightwell-lab
+            state: directory
+            mode: "0755"
+          become: true
+
+        - name: Write AO binding facts for the rest of the lab
+          ansible.builtin.copy:
+            dest: /etc/lightwell-lab/ao-binding.yml
+            mode: "0640"
+            content: |
+              # Generated by lab/setup/configure-ao.yml -- do not edit by hand.
+              ao_url: "{{ ao_url }}"
+              ao_workflow_id: "{{ ao_workflow_id }}"
+              ao_workflow_name: "{{ ao_workflow_name }}"
+              ao_integration_id: "{{ ao_integration_id }}"
+              ao_webhook_path: "{{ ao_webhook_path }}"
+              ao_webhook_url: "{{ ao_url }}/api/v1/webhooks/{{ ao_webhook_path }}"
+              ao_workflow_builder_url: "{{ ao_url }}/workflow-builder/{{ ao_workflow_id }}"
+          become: true
+
+        - name: Show the AO binding
+          ansible.builtin.debug:
+            msg:
+              - "AO workflow published: {{ ao_workflow_name }}"
+              - "Builder:  {{ ao_url }}/workflow-builder/{{ ao_workflow_id }}"
+              - "Webhook:  {{ ao_url }}/api/v1/webhooks/{{ ao_webhook_path }}"
+              - "AAP integration {{ ao_integration_name }} validated against {{ ao_aap_public_url }}"
+              - "Job templates bound: {{ ao_jt_map.keys() | list | length }} visible on this AAP"
+              - ""
+              - "Teardown: this lab leaves a workflow, an integration and a credential"
+              - "named for lab {{ lab_id }} on the shared AO instance. They are not"
+              - "removed automatically -- see lab/setup/teardown-ao.yml."

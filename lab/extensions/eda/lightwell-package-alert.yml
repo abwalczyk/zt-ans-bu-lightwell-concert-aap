@@ -1,7 +1,9 @@
 ---
 # EDA Rulebook: Lightwell Package Ingestion
-# Canonical copy for EDA SCM sync lives at extensions/eda/rulebooks/lightwell-package-alert.yml
-# Keep this path in sync for lab docs / tree layout.
+# Receives Artifactory webhook events when a new Lightwell remediated package is
+# published, and hands them to the Automation Orchestrator workflow that
+# lab/setup/configure-ao.yml published for this lab.
+# Path: extensions/eda/rulebooks/ (EDA project sync convention)
 
 - name: Lightwell Package Processing
   hosts: all
@@ -16,16 +18,22 @@
         event.payload.package_name is defined and
         event.payload.package_version is defined and
         event.payload.repository is search("lightwell")
+      # AO owns the orchestration -- routing, the approval gate and the audit
+      # trail all live in the AO workflow, not here. EDA cannot POST to AO
+      # directly (rulebook actions launch templates, not HTTP calls), so this
+      # job template is a one-task relay onto the AO webhook.
       action:
-        run_workflow_template:
-          name: "Lightwell Proactive Update Orchestrator"
+        run_job_template:
+          name: "AO - Trigger Proactive Update Workflow"
           organization: "Default"
-          extra_vars:
-            package_name: "{{ event.payload.package_name }}"
-            package_version: "{{ event.payload.package_version }}"
-            artifact_id: "{{ event.payload.artifact_id | default('') }}"
-            artifact_url: "{{ event.payload.artifact_url | default('') }}"
-            artifact_checksum: "{{ event.payload.checksum | default('') }}"
-            source_repository: "{{ event.payload.repository }}"
-            fixes_cve: "{{ event.payload.remediation_info.fixes_cve | default([]) }}"
-            severity: "{{ event.payload.remediation_info.severity | default('unknown') }}"
+          job_args:
+            extra_vars:
+              package_name: "{{ event.payload.package_name }}"
+              package_version: "{{ event.payload.package_version }}"
+              previous_version: "{{ event.payload.previous_version | default('') }}"
+              artifact_id: "{{ event.payload.artifact_id | default('') }}"
+              artifact_url: "{{ event.payload.artifact_url | default('') }}"
+              artifact_checksum: "{{ event.payload.checksum | default('') }}"
+              source_repository: "{{ event.payload.repository }}"
+              fixes_cve: "{{ event.payload.remediation_info.fixes_cve | default('') }}"
+              severity: "{{ event.payload.remediation_info.severity | default('unknown') }}"

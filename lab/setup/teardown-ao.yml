@@ -1,0 +1,86 @@
+---
+# Remove this lab's objects from the shared Automation Orchestrator instance.
+#
+# configure-ao.yml creates three things on an AO instance that outlives the
+# lab: a workflow, an integration and a credential, all named for lab_id.
+# Nothing reaps them when the lab environment is destroyed, so a workshop that
+# runs N times leaves 3N objects behind -- and every stale integration sits in
+# the AO console with validation_status "error" once its AAP disappears.
+#
+# Run this on lab teardown, or by hand against an old lab_id:
+#   LAB_ID=lab-07 ansible-playbook lab/setup/teardown-ao.yml
+
+- name: Remove lab objects from Automation Orchestrator
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  vars_files:
+    - vars/workshop.yml
+
+  vars:
+    ao_api: "{{ ao_url }}/api/v1"
+
+  tasks:
+    - name: Assert AO credentials are present
+      ansible.builtin.assert:
+        that:
+          - ao_client_id | length > 0
+          - ao_client_secret | length > 0
+        fail_msg: "AO teardown requires AO_CLIENT_ID and AO_CLIENT_SECRET in the environment."
+        quiet: true
+
+    - name: Exchange AO service account credentials for a bearer token
+      ansible.builtin.uri:
+        url: "{{ ao_api }}/auth/token"
+        method: POST
+        headers:
+          Content-Type: application/x-www-form-urlencoded
+        body: >-
+          grant_type=client_credentials&client_id={{ ao_client_id | urlencode }}&client_secret={{ ao_client_secret | urlencode }}
+        status_code: [200]
+      register: _ao_token
+      no_log: true
+
+    - name: Set AO authorization header
+      ansible.builtin.set_fact:
+        ao_headers:
+          Authorization: "Bearer {{ _ao_token.json.access_token }}"
+          Content-Type: application/json
+      no_log: true
+
+    # Delete in dependency order: the workflow references the integration,
+    # the integration references the credential.
+    # AO paginates these: {"resources": [...], "next": <cursor>}, 20 per page by
+    # default, "limit" capped at 100. Lists sort newest-first, so a lab's own
+    # objects are on the first page.
+    - name: Find this lab's objects
+      ansible.builtin.uri:
+        url: "{{ ao_api }}/{{ item }}?limit=100"
+        headers: "{{ ao_headers }}"
+        status_code: [200]
+      register: _ao_inventory
+      loop:
+        - workflows
+        - integrations
+        - credentials
+
+    - name: Delete this lab's AO objects
+      ansible.builtin.uri:
+        url: "{{ ao_api }}/{{ item.0.item }}/{{ item.1.id }}"
+        method: DELETE
+        headers: "{{ ao_headers }}"
+        status_code: [200, 202, 204, 404]
+      loop: >-
+        {{ _ao_inventory.results | subelements('json.resources', skip_missing=True) }}
+      loop_control:
+        label: "{{ item.0.item }}/{{ item.1.name | default(item.1.id) }}"
+      when: >-
+        item.1.name | default('') in [ao_workflow_name, ao_integration_name, ao_credential_name]
+
+    - name: Report teardown
+      ansible.builtin.debug:
+        msg: >-
+          Removed AO objects for lab {{ lab_id }}:
+          workflow "{{ ao_workflow_name }}", integration "{{ ao_integration_name }}",
+          credential "{{ ao_credential_name }}".

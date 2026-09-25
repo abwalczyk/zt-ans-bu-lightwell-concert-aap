@@ -43,6 +43,51 @@
           verify_ssl: false
         state: present
 
+    # ── Automation Orchestrator credential ─────────────────────────────
+    # The AO relay job template runs inside an execution environment, so it can
+    # see neither the control VM's environment variables nor files written to
+    # /etc. Injecting the AO service account credentials through a custom
+    # credential type puts them in the EE as AO_CLIENT_ID / AO_CLIENT_SECRET,
+    # which is exactly what the lookup('env', ...) entries in workshop.yml read.
+    - name: Create Automation Orchestrator credential type
+      ansible.controller.credential_type:
+        name: "Automation Orchestrator"
+        kind: cloud
+        description: "OAuth2 client_credentials for the shared AO instance"
+        inputs:
+          fields:
+            - id: ao_url
+              type: string
+              label: "AO base URL"
+            - id: ao_client_id
+              type: string
+              label: "Service account client ID"
+            - id: ao_client_secret
+              type: string
+              label: "Service account client secret"
+              secret: true
+          required:
+            - ao_url
+            - ao_client_id
+            - ao_client_secret
+        injectors:
+          env:
+            AO_URL: "{{ '{{ ao_url }}' }}"
+            AO_CLIENT_ID: "{{ '{{ ao_client_id }}' }}"
+            AO_CLIENT_SECRET: "{{ '{{ ao_client_secret }}' }}"
+        state: present
+
+    - name: Create Automation Orchestrator credential
+      ansible.controller.credential:
+        name: "{{ workshop_ao_credential_name }}"
+        organization: "{{ workshop_org }}"
+        credential_type: "Automation Orchestrator"
+        inputs:
+          ao_url: "{{ ao_url }}"
+          ao_client_id: "{{ ao_client_id }}"
+          ao_client_secret: "{{ ao_client_secret }}"
+        state: present
+
     # ── Project ────────────────────────────────────────────────────────
     - name: Create Lightwell proactive update lab project
       ansible.controller.project:
@@ -213,13 +258,41 @@
           new_version: "{{ lightwell_version }}"
         state: present
 
-    # ── Automation Orchestrator Workflow ───────────────────────────────
-    # Note: This workflow is triggered by EDA when Artifactory publishes a new
-    # Lightwell remediated package. Concert provides SBOM inventory and topology
-    # data, AO orchestrates the update through Tekton and ArgoCD.
+    # ── Handoff to Automation Orchestrator ─────────────────────────────
+    # EDA Controller cannot call an HTTP endpoint directly -- its rulebook
+    # actions launch job templates. This thin template is the EDA -> AO hop: it
+    # does one authenticated POST to the webhook of the workflow that
+    # lab/setup/configure-ao.yml published for this lab. Keeping it a job
+    # template (rather than a run_module action) puts the handoff in the AAP
+    # job list, which is where students look when AO does not start.
+    - name: Create job template - Trigger AO Workflow
+      ansible.controller.job_template:
+        name: "AO - Trigger Proactive Update Workflow"
+        organization: "{{ workshop_org }}"
+        job_type: run
+        inventory: "{{ workshop_inventory_name }}"
+        project: "{{ workshop_project_name }}"
+        playbook: lab/playbooks/ao/trigger-ao-workflow.yml
+        credentials:
+          - "{{ workshop_credential_name }}"
+          - "{{ workshop_ao_credential_name }}"
+        execution_environment: "{{ workshop_ee_name }}"
+        ask_variables_on_launch: true
+        extra_vars:
+          package_name: "{{ lightwell_package }}"
+          package_version: "{{ lightwell_version }}"
+          target_app: "{{ target_app }}"
+        state: present
+
+    # ── AAP-only fallback workflow ─────────────────────────────────────
+    # Superseded by the AO workflow that configure-ao.yml publishes. AO now owns
+    # the routing decisions, the approval gate and the audit trail; this plain
+    # AAP workflow runs the same six job templates in a fixed line, with no
+    # branching. It stays provisioned so the lab still demonstrates end to end
+    # if the shared AO instance is unavailable -- EDA no longer points at it.
     - name: Create Lightwell Proactive Update workflow
       ansible.controller.workflow_job_template:
-        name: "Lightwell Proactive Update Orchestrator"
+        name: "Lightwell Proactive Update Orchestrator (AAP fallback)"
         organization: "{{ workshop_org }}"
         inventory: "{{ workshop_inventory_name }}"
         ask_variables_on_launch: true
@@ -232,7 +305,7 @@
     # Phase 1: Concert Inventory & Topology Queries
     - name: Add workflow node - Concert SBOM Inventory
       ansible.controller.workflow_job_template_node:
-        workflow_job_template: "Lightwell Proactive Update Orchestrator"
+        workflow_job_template: "Lightwell Proactive Update Orchestrator (AAP fallback)"
         identifier: concert_sbom
         unified_job_template: "Concert - Query SBOM Inventory"
         state: present
@@ -240,7 +313,7 @@
 
     - name: Add workflow node - Concert Arena View Topology
       ansible.controller.workflow_job_template_node:
-        workflow_job_template: "Lightwell Proactive Update Orchestrator"
+        workflow_job_template: "Lightwell Proactive Update Orchestrator (AAP fallback)"
         identifier: concert_topology
         unified_job_template: "Concert - Query Topology"
         state: present
@@ -249,7 +322,7 @@
     # Phase 2: Update Execution
     - name: Add workflow node - Update Dependency in Git
       ansible.controller.workflow_job_template_node:
-        workflow_job_template: "Lightwell Proactive Update Orchestrator"
+        workflow_job_template: "Lightwell Proactive Update Orchestrator (AAP fallback)"
         identifier: update_dependency
         unified_job_template: "Lightwell - Update Dependency in Git"
         state: present
@@ -257,7 +330,7 @@
 
     - name: Add workflow node - Monitor Tekton Pipeline
       ansible.controller.workflow_job_template_node:
-        workflow_job_template: "Lightwell Proactive Update Orchestrator"
+        workflow_job_template: "Lightwell Proactive Update Orchestrator (AAP fallback)"
         identifier: monitor_tekton
         unified_job_template: "Lightwell - Monitor Tekton Pipeline"
         state: present
@@ -265,7 +338,7 @@
 
     - name: Add workflow node - Validate Deployment
       ansible.controller.workflow_job_template_node:
-        workflow_job_template: "Lightwell Proactive Update Orchestrator"
+        workflow_job_template: "Lightwell Proactive Update Orchestrator (AAP fallback)"
         identifier: validate_deployment
         unified_job_template: "Lightwell - Validate Deployment"
         state: present
@@ -274,7 +347,7 @@
     # Phase 3: Concert Inventory Update
     - name: Add workflow node - Update Concert Inventory
       ansible.controller.workflow_job_template_node:
-        workflow_job_template: "Lightwell Proactive Update Orchestrator"
+        workflow_job_template: "Lightwell Proactive Update Orchestrator (AAP fallback)"
         identifier: update_concert
         unified_job_template: "Concert - Update Inventory"
         state: present
@@ -283,7 +356,7 @@
     # Workflow Links
     - name: Link SBOM → Topology
       ansible.controller.workflow_job_template_node:
-        workflow_job_template: "Lightwell Proactive Update Orchestrator"
+        workflow_job_template: "Lightwell Proactive Update Orchestrator (AAP fallback)"
         identifier: concert_topology
         success_nodes:
           - concert_sbom
@@ -291,7 +364,7 @@
 
     - name: Link Topology → Update Dependency
       ansible.controller.workflow_job_template_node:
-        workflow_job_template: "Lightwell Proactive Update Orchestrator"
+        workflow_job_template: "Lightwell Proactive Update Orchestrator (AAP fallback)"
         identifier: update_dependency
         success_nodes:
           - concert_topology
@@ -299,7 +372,7 @@
 
     - name: Link Update Dependency → Monitor Tekton
       ansible.controller.workflow_job_template_node:
-        workflow_job_template: "Lightwell Proactive Update Orchestrator"
+        workflow_job_template: "Lightwell Proactive Update Orchestrator (AAP fallback)"
         identifier: monitor_tekton
         success_nodes:
           - update_dependency
@@ -307,7 +380,7 @@
 
     - name: Link Monitor Tekton → Validate Deployment
       ansible.controller.workflow_job_template_node:
-        workflow_job_template: "Lightwell Proactive Update Orchestrator"
+        workflow_job_template: "Lightwell Proactive Update Orchestrator (AAP fallback)"
         identifier: validate_deployment
         success_nodes:
           - monitor_tekton
@@ -315,7 +388,7 @@
 
     - name: Link Validate → Update Concert Status
       ansible.controller.workflow_job_template_node:
-        workflow_job_template: "Lightwell Proactive Update Orchestrator"
+        workflow_job_template: "Lightwell Proactive Update Orchestrator (AAP fallback)"
         identifier: update_concert
         success_nodes:
           - validate_deployment

@@ -37,6 +37,7 @@ workshop_project_name: "Lightwell Proactive Updates"
 workshop_inventory_name: "Concert Lab Inventory"
 workshop_credential_name: "Lab Machine Credential"
 workshop_ocp_credential_name: "Lab OpenShift Credential"
+workshop_ao_credential_name: "Lab Automation Orchestrator Credential"
 workshop_ee_name: "Default execution environment"
 
 # Application source repository
@@ -67,6 +68,47 @@ artifactory_lightwell_repo: "lightwell-remediated"
 concert_api_url: "{{ lookup('env', 'CONCERT_API_URL') }}"
 concert_api_token: "{{ lookup('env', 'CONCERT_API_TOKEN') }}"
 
+# ── Automation Orchestrator (shared instance, one per-student workflow) ──
+# AO lives outside the lab topology. Each student's provisioning run registers
+# this lab's AAP with AO over the API, then creates and publishes its own copy
+# of the workflow. Everything AO-side is suffixed with lab_id to keep students
+# from colliding on the shared instance.
+#
+# AO_CLIENT_ID / AO_CLIENT_SECRET are the client_credentials of a service
+# account created once, by hand, on the AO instance. They are lab-wide secrets,
+# not per-student, and must be injected as environment variables -- never
+# committed (config/secrets.yaml is tracked in git).
+ao_url: "{{ lookup('env', 'AO_URL') | default('http://54.159.25.87:8080', true) }}"
+ao_client_id: "{{ lookup('env', 'AO_CLIENT_ID') }}"
+ao_client_secret: "{{ lookup('env', 'AO_CLIENT_SECRET') }}"
+ao_service_account_name: "{{ lookup('env', 'AO_SERVICE_ACCOUNT_NAME') | default('lightwell-lab-provisioner', true) }}"
+ao_project_name: default
+
+# AO must reach this lab's AAP from outside, so the integration cannot use
+# aap_host (https://localhost). This is the public control route -- the same URL
+# the Showroom "AAP" tab points at, per ui-config.yml:
+#     https://control-${guid}.${domain}/
+# GUID and DOMAIN are already in the environment at provision time (see
+# setup-automation/main.yml), and configure-control.yml passes them through as
+# workshop_guid / workshop_domain, so this normally needs no configuration.
+# Set AAP_PUBLIC_URL to override.
+workshop_guid: "{{ lookup('env', 'GUID') }}"
+workshop_domain: "{{ lookup('env', 'DOMAIN') }}"
+ao_aap_public_url: >-
+  {{ lookup('env', 'AAP_PUBLIC_URL')
+     | default('https://control-' ~ workshop_guid ~ '.' ~ workshop_domain, true) }}
+
+# Per-student AO object names (all suffixed with lab_id)
+ao_credential_name: "Lightwell Lab {{ lab_id }} - AAP"
+ao_integration_name: "Lightwell Lab {{ lab_id }} - AAP"
+ao_workflow_name: "Lightwell Proactive Update - {{ lab_id }}"
+ao_webhook_path: "lightwell-package-published-{{ lab_id }}"
+
+# Shared AO-side LLM used by the agentic nodes (drc maas sonnet 4.6).
+# Not per-student -- these already exist on the AO instance.
+ao_llm_model_id: "{{ lookup('env', 'AO_LLM_MODEL_ID') | default('8ff83f47-b868-41d7-9dfa-906dbcda1a74', true) }}"
+ao_llm_credential_id: "{{ lookup('env', 'AO_LLM_CREDENTIAL_ID') | default('383e035e-482f-4fc5-912c-ef65ad28d66b', true) }}"
+
 # Baseline Flask application on rhel01 (pre-migration reference deployment)
 # NOTE: the lab's remediation path now deploys to OpenShift via Tekton + ArgoCD.
 # These paths only drive the Phase 0 baseline app that still runs on rhel01.
@@ -74,5 +116,9 @@ flask_app_dir: /opt/flask-app
 flask_app_user: labuser
 flask_app_service: flask-app
 
-# Lab identification
-lab_id: "{{ lookup('env', 'LAB_ID') | default('lab-01', true) }}"
+# Lab identification. The RHDP GUID is the natural per-lab suffix -- it is what
+# every route is already named for -- so prefer it over a hand-set LAB_ID.
+lab_id: >-
+  {{ lookup('env', 'LAB_ID')
+     | default(workshop_guid, true)
+     | default('lab-01', true) }}

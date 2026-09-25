@@ -17,7 +17,10 @@ In this module, you'll watch Automation Orchestrator execute the full update wor
 
 The workflow from Module 1 continues now with the update phase. Concert has told Automation Orchestrator what is affected and what it touches; the switch node has routed `flask-api-app` to auto-update.
 
-Navigate back to **Jobs** in Automation Controller and find your running `Lightwell Proactive Update Orchestrator` workflow.
+Navigate back to the Automation Orchestrator workflow you opened in Module 1 —
+`Lightwell Proactive Update` for your lab ID. Each AAP Job node in it launches a
+job template on your own Automation Controller, so you can follow along in either
+place.
 
 [NOTE]
 ====

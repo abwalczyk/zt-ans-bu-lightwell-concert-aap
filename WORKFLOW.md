@@ -34,10 +34,26 @@
      }
      ```
 
-**2. EDA Triggers Automation Orchestrator Workflow**
-   - EDA action: `run_workflow_template`
-   - Workflow: "Lightwell Proactive Update Orchestrator"
-   - Extra vars: `{ "package_name": "pyyaml", "package_version": "6.0.2", "artifact_id": "pyyaml-6.0.2.rhlw-00456" }`
+**2. EDA Hands Off to Automation Orchestrator**
+
+   AO is the orchestrator, but EDA Controller has no rulebook action that calls
+   an HTTP endpoint — its actions launch templates. So the hop is two short
+   steps, and the relay is deliberately visible in the AAP job list:
+
+   - EDA action: `run_job_template`
+   - Job template: "AO - Trigger Proactive Update Workflow"
+     (`lab/playbooks/ao/trigger-ao-workflow.yml`)
+   - That playbook exchanges the AO service account's `client_credentials` for a
+     bearer token and POSTs the event to the workflow's EDA trigger:
+     `POST {AO_URL}/api/v1/webhooks/lightwell-package-published-{lab_id}`
+   - Payload: `{ "package_name": "pyyaml", "package_version": "6.0.2", "artifact_id": "pyyaml-6.0.2.rhlw-00456", ... }`
+   - AO workflow: "Lightwell Proactive Update - {lab_id}", created and published
+     for this specific lab by `lab/setup/configure-ao.yml`
+
+   A plain AAP workflow, "Lightwell Proactive Update Orchestrator (AAP
+   fallback)", still runs the same six job templates in a fixed line with no
+   branching. It stays provisioned for the case where the shared AO instance is
+   unavailable, but EDA no longer points at it.
 
 **3. AO Job Template: Query Concert SBOM Inventory**
    - Playbook: `lab/playbooks/concert/query-sbom-by-package.yml`

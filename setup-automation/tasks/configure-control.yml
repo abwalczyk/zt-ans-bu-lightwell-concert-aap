@@ -62,6 +62,41 @@
   register: _aap_config
   changed_when: true
 
+# Must follow the AAP step: AO resolves this lab's job templates by name, so
+# they have to exist before the AO workflow can be rendered and published.
+# Skips itself cleanly if no AO service account is configured.
+- name: Bind lab to Automation Orchestrator
+  ansible.builtin.command:
+    cmd: >-
+      ansible-playbook lab/setup/configure-ao.yml
+      -i lab/inventory/workshop.yml
+      -e "controller_oauth_token_override={{ controller_oauth_token }}"
+      -e "ansible_ssh_pass={{ hostvars[inventory_hostname].ansible_ssh_pass | default('ansible123!') }}"
+      -e "workshop_guid={{ guid | default('') }}"
+      -e "workshop_domain={{ domain | default('') }}"
+    chdir: "{{ workshop_repo_dest }}"
+  environment:
+    ANSIBLE_HOST_KEY_CHECKING: "False"
+    # Passed through rather than put on the command line so the client secret
+    # does not land in the process list.
+    GUID: "{{ guid | default('') }}"
+    DOMAIN: "{{ domain | default('') }}"
+    AO_URL: "{{ lookup('ansible.builtin.env', 'AO_URL') }}"
+    AO_CLIENT_ID: "{{ lookup('ansible.builtin.env', 'AO_CLIENT_ID') }}"
+    AO_CLIENT_SECRET: "{{ lookup('ansible.builtin.env', 'AO_CLIENT_SECRET') }}"
+  register: _ao_config
+  changed_when: true
+  # A shared external service should not be able to fail the lab build.
+  failed_when: false
+  tags:
+    - ao
+
+- name: Report AO binding result
+  ansible.builtin.debug:
+    msg: "{{ _ao_config.stdout_lines | default([]) | select('search', 'AO |webhook|skipping') | list }}"
+  tags:
+    - ao
+
 - name: Configure EDA Controller (credential and project)
   ansible.builtin.command:
     cmd: >-

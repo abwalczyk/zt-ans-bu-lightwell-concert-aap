@@ -1,0 +1,505 @@
+{
+  "name": "Lightwell Proactive Update Orchestrator",
+  "description": "Proactive dependency remediation. Trigger is a Lightwell remediated package landing in the Artifactory lightwell-remediated repo (NOT a CVE alert). Phase 1: Concert SBOM inventory + Arena View topology, then AI impact triage decides the route. Phase 2a: auto-update path (git bump -> Tekton build -> ArgoCD sync -> validate -> Concert write-back). Phase 2b: downstream consumers exist, human approval before the same path. Phase 2c: non-production only, schedule for the next window. Phase 2d: portfolio not affected, log only. LLM: drc maas sonnet 4.6. NOTE: this file is the provisioning TEMPLATE. lab/setup/configure-ao.yml rewrites it per student at lab build time: it registers the student's AAP as an AO integration, resolves job_template_id 9001-9006 by matching job_template_name, rewrites integration_id and credential_id on every AAP node, suffixes the trigger webhook_path with the lab id, and publishes the result. The ids committed here are placeholders bound to an unreachable integration, so an unmodified import cannot execute against the wrong template.",
+  "schema_version": "2.0.0",
+  "triggers": [
+    {
+      "id": "trigger_package",
+      "name": "Lightwell Package Published (Artifactory -> EDA)",
+      "type": "eda_trigger",
+      "position": {
+        "x": 0,
+        "y": 400
+      },
+      "parameters": {
+        "webhook_path": "lightwell-package-published",
+        "input_schema": {
+          "type": "object",
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "properties": {
+            "package_name": {
+              "type": "string"
+            },
+            "package_version": {
+              "type": "string"
+            },
+            "previous_version": {
+              "type": "string"
+            },
+            "artifact_id": {
+              "type": "string"
+            },
+            "repository": {
+              "type": "string"
+            },
+            "artifact_url": {
+              "type": "string"
+            },
+            "checksum": {
+              "type": "string"
+            },
+            "fixes_cve": {
+              "type": "string"
+            },
+            "severity": {
+              "type": "string"
+            },
+            "target_app": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": true
+        },
+        "authorized_service_account_ids": []
+      }
+    }
+  ],
+  "nodes": [
+    {
+      "id": "concert_sbom_job",
+      "name": "Concert - Portfolio SBOM Inventory Query",
+      "type": "aap_job_template",
+      "position": {
+        "x": 400,
+        "y": 400
+      },
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "package_name": "${trigger.package_name}",
+          "package_version": "${trigger.package_version}",
+          "target_app": "${trigger.target_app}"
+        },
+        "credential_id": "423b601b-357b-4f8b-8c04-93ae06a29bdb",
+        "integration_id": "21816076-bfc4-4787-b651-34883ee2a845",
+        "job_template_id": 9001,
+        "job_template_name": "Concert - Query SBOM Inventory",
+        "organization_name": "Default"
+      }
+    },
+    {
+      "id": "concert_topology_job",
+      "name": "Concert - Arena View Topology Query",
+      "type": "aap_job_template",
+      "position": {
+        "x": 800,
+        "y": 400
+      },
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "app_name": "${trigger.target_app}"
+        },
+        "credential_id": "423b601b-357b-4f8b-8c04-93ae06a29bdb",
+        "integration_id": "21816076-bfc4-4787-b651-34883ee2a845",
+        "job_template_id": 9002,
+        "job_template_name": "Concert - Query Topology",
+        "organization_name": "Default"
+      }
+    },
+    {
+      "id": "impact_agent",
+      "name": "[AI] Portfolio Impact Triage and Route Decision",
+      "type": "agentic",
+      "position": {
+        "x": 1200,
+        "y": 400
+      },
+      "parameters": {
+        "prompt": "You are a dependency remediation coordinator. A trusted, remediated package has just been PUBLISHED. You are not reacting to a vulnerability being found - you are deciding where an available fix should be applied.\n\nPublished artifact:\n- Package: ${trigger.package_name} ${trigger.package_version}\n- Supersedes: ${trigger.previous_version}\n- Artifact ID: ${trigger.artifact_id}\n- Repository: ${trigger.repository}\n- Fixes CVE: ${trigger.fixes_cve}\n- Severity of the flaw it fixes: ${trigger.severity}\n\nConcert SBOM inventory (portfolio-wide, pre-indexed):\n- Applications still on an older build: ${concert_sbom_job.artifacts.concert_total_affected}\n- Target app present in that list: ${concert_sbom_job.artifacts.concert_target_app_found}\n- Target app current version: ${concert_sbom_job.artifacts.concert_current_version}\n- Owning team: ${concert_sbom_job.artifacts.concert_owner_team}\n- Source repository: ${concert_sbom_job.artifacts.concert_repository}\n\nConcert Arena View topology:\n- Deployment count: ${concert_topology_job.artifacts.concert_deployment_count}\n- Has a production deployment: ${concert_topology_job.artifacts.concert_has_prod_deployment}\n- Downstream dependency count: ${concert_topology_job.artifacts.concert_dependency_count}\n\nDecide the route using these rules, in order. Stop at the first match.\n\n1. If concert_target_app_found is false OR concert_total_affected is 0, nothing in the portfolio needs this fix. Route 'log_only'.\n2. If concert_dependency_count is greater than 0, other teams consume this application. A human must approve before we change it. Route 'approval_required'.\n3. If concert_has_prod_deployment is true AND severity is critical or high, this is the auto-update path. Route 'auto_update'.\n4. Otherwise the app is non-production or the fix is low urgency. Route 'schedule'.\n\nOutput ONLY valid JSON:\n{\n  \"route\": \"auto_update or approval_required or schedule or log_only\",\n  \"urgency\": \"CRITICAL or HIGH or MEDIUM or LOW\",\n  \"affected_count\": 12,\n  \"target_app_affected\": true,\n  \"has_downstream\": false,\n  \"blast_radius\": \"one sentence on what else is touched if we ship this\",\n  \"reasoning\": \"one sentence explaining the routing decision\"\n}",
+        "llm_model_id": "8ff83f47-b868-41d7-9dfa-906dbcda1a74",
+        "credential_id": "383e035e-482f-4fc5-912c-ef65ad28d66b",
+        "response_schema": {
+          "type": "object",
+          "properties": {
+            "route": {
+              "type": "string"
+            },
+            "urgency": {
+              "type": "string"
+            },
+            "affected_count": {
+              "type": "number"
+            },
+            "target_app_affected": {
+              "type": "boolean"
+            },
+            "has_downstream": {
+              "type": "boolean"
+            },
+            "blast_radius": {
+              "type": "string"
+            },
+            "reasoning": {
+              "type": "string"
+            }
+          }
+        },
+        "tool_selection_strategy": "NONE"
+      }
+    },
+    {
+      "id": "route_switch",
+      "name": "Remediation Route Decision",
+      "type": "switch",
+      "position": {
+        "x": 1600,
+        "y": 400
+      },
+      "parameters": {
+        "cases": [
+          {
+            "port": "case_0",
+            "label": "Production + high severity - auto update",
+            "condition": "${impact_agent.result.content.route} == \"auto_update\""
+          },
+          {
+            "port": "case_1",
+            "label": "Downstream consumers - needs approval",
+            "condition": "${impact_agent.result.content.route} == \"approval_required\""
+          },
+          {
+            "port": "case_2",
+            "label": "Non-production only - schedule",
+            "condition": "${impact_agent.result.content.route} == \"schedule\""
+          },
+          {
+            "port": "case_3",
+            "label": "Portfolio not affected - log only",
+            "condition": "${impact_agent.result.content.route} == \"log_only\""
+          }
+        ],
+        "default_port": "default"
+      }
+    },
+    {
+      "id": "approval_downstream",
+      "name": "Approve Update - Downstream Consumers Exist",
+      "type": "approval",
+      "position": {
+        "x": 2100,
+        "y": 420
+      },
+      "parameters": {}
+    },
+    {
+      "id": "update_git_job",
+      "name": "AAP - Bump Dependency, Branch, Commit, Push",
+      "type": "aap_job_template",
+      "position": {
+        "x": 2100,
+        "y": 40
+      },
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "package_name": "${trigger.package_name}",
+          "package_version": "${trigger.package_version}",
+          "artifact_id": "${trigger.artifact_id}",
+          "fixes_cve": "${trigger.fixes_cve}",
+          "app_repo_url": "${concert_sbom_job.artifacts.concert_repository}"
+        },
+        "credential_id": "423b601b-357b-4f8b-8c04-93ae06a29bdb",
+        "integration_id": "21816076-bfc4-4787-b651-34883ee2a845",
+        "job_template_id": 9003,
+        "job_template_name": "Lightwell - Update Dependency in Git",
+        "organization_name": "Default"
+      }
+    },
+    {
+      "id": "monitor_tekton_job",
+      "name": "Tekton - Monitor PipelineRun (test, build, push, GitOps bump)",
+      "type": "aap_job_template",
+      "position": {
+        "x": 2500,
+        "y": 40
+      },
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "git_branch": "${update_git_job.artifacts.git_branch}",
+          "git_commit_sha": "${update_git_job.artifacts.git_commit_sha}"
+        },
+        "credential_id": "423b601b-357b-4f8b-8c04-93ae06a29bdb",
+        "integration_id": "21816076-bfc4-4787-b651-34883ee2a845",
+        "job_template_id": 9004,
+        "job_template_name": "Lightwell - Monitor Tekton Pipeline",
+        "organization_name": "Default"
+      }
+    },
+    {
+      "id": "validate_job",
+      "name": "ArgoCD + App - Validate Deployment",
+      "type": "aap_job_template",
+      "position": {
+        "x": 2900,
+        "y": 40
+      },
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "package_name": "${trigger.package_name}",
+          "expected_version": "${trigger.package_version}",
+          "container_image": "${monitor_tekton_job.artifacts.container_image}"
+        },
+        "credential_id": "423b601b-357b-4f8b-8c04-93ae06a29bdb",
+        "integration_id": "21816076-bfc4-4787-b651-34883ee2a845",
+        "job_template_id": 9005,
+        "job_template_name": "Lightwell - Validate Deployment",
+        "organization_name": "Default"
+      }
+    },
+    {
+      "id": "validation_switch",
+      "name": "Deployment Healthy?",
+      "type": "switch",
+      "position": {
+        "x": 3300,
+        "y": 40
+      },
+      "parameters": {
+        "cases": [
+          {
+            "port": "case_0",
+            "label": "Validation passed - close the loop",
+            "condition": "${validate_job.artifacts.validation_status} == \"success\""
+          }
+        ],
+        "default_port": "default"
+      }
+    },
+    {
+      "id": "update_concert_job",
+      "name": "Concert - Write Back Updated SBOM",
+      "type": "aap_job_template",
+      "position": {
+        "x": 3700,
+        "y": -140
+      },
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "package_name": "${trigger.package_name}",
+          "previous_version": "${concert_sbom_job.artifacts.concert_current_version}",
+          "new_version": "${trigger.package_version}",
+          "container_image": "${validate_job.artifacts.running_image}",
+          "validation_passed": "true"
+        },
+        "credential_id": "423b601b-357b-4f8b-8c04-93ae06a29bdb",
+        "integration_id": "21816076-bfc4-4787-b651-34883ee2a845",
+        "job_template_id": 9006,
+        "job_template_name": "Concert - Update Inventory",
+        "organization_name": "Default"
+      }
+    },
+    {
+      "id": "audit_summary_agent",
+      "name": "[AI] Audit Trail Summary",
+      "type": "agentic",
+      "position": {
+        "x": 4100,
+        "y": -140
+      },
+      "parameters": {
+        "prompt": "Write the closing audit record for a completed proactive dependency update. Be factual and terse. This is the artifact an auditor reads.\n\nTrigger (Artifactory):\n- Package published: ${trigger.package_name} ${trigger.package_version}\n- Artifact ID: ${trigger.artifact_id}\n- Repository: ${trigger.repository}\n- Checksum: ${trigger.checksum}\n- Fixes: ${trigger.fixes_cve}\n\nImpact analysis (IBM Concert):\n- Applications on an older build at trigger time: ${concert_sbom_job.artifacts.concert_total_affected}\n- Owning team: ${concert_sbom_job.artifacts.concert_owner_team}\n- Downstream consumers: ${concert_topology_job.artifacts.concert_dependency_count}\n\nRouting (Automation Orchestrator):\n- Route taken: ${impact_agent.result.content.route}\n- Rationale: ${impact_agent.result.content.reasoning}\n\nSource change (AAP):\n- Branch: ${update_git_job.artifacts.git_branch}\n- Commit: ${update_git_job.artifacts.git_commit_sha}\n\nBuild and deploy (Tekton, ArgoCD):\n- PipelineRun: ${monitor_tekton_job.artifacts.tekton_pipelinerun}\n- Image: ${monitor_tekton_job.artifacts.container_image}\n- ArgoCD sync: ${validate_job.artifacts.argocd_sync_status} at revision ${validate_job.artifacts.argocd_revision}\n\nValidation:\n- Status: ${validate_job.artifacts.validation_status}\n- Running version: ${validate_job.artifacts.deployed_version}\n- Timestamp: ${validate_job.artifacts.validation_timestamp}\n\nOutput ONLY valid JSON:\n{\n  \"headline\": \"one line: what changed, where, and that it is verified\",\n  \"chain_of_custody\": [\"Artifactory: ...\", \"EDA: ...\", \"AO: ...\", \"Concert: ...\", \"AAP: ...\", \"Tekton: ...\", \"ArgoCD: ...\", \"Validation: ...\"],\n  \"portfolio_drift_before\": 12,\n  \"portfolio_drift_after\": 11,\n  \"human_intervention\": \"none, or describe the approval\",\n  \"residual_risk\": \"what is still on an older build and who owns it\"\n}",
+        "llm_model_id": "8ff83f47-b868-41d7-9dfa-906dbcda1a74",
+        "credential_id": "383e035e-482f-4fc5-912c-ef65ad28d66b",
+        "response_schema": {
+          "type": "object",
+          "properties": {
+            "headline": {
+              "type": "string"
+            },
+            "chain_of_custody": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "portfolio_drift_before": {
+              "type": "number"
+            },
+            "portfolio_drift_after": {
+              "type": "number"
+            },
+            "human_intervention": {
+              "type": "string"
+            },
+            "residual_risk": {
+              "type": "string"
+            }
+          }
+        },
+        "tool_selection_strategy": "NONE"
+      }
+    },
+    {
+      "id": "rollback_agent",
+      "name": "[AI] Validation Failed - Rollback Guidance and Escalation",
+      "type": "agentic",
+      "position": {
+        "x": 3700,
+        "y": 260
+      },
+      "parameters": {
+        "prompt": "A proactive dependency update reached production but failed validation. Concert has NOT been updated, so portfolio inventory still shows the old version - that is correct and must stay that way until this is resolved.\n\nWhat we attempted:\n- Package: ${trigger.package_name} ${trigger.package_version} (was ${concert_sbom_job.artifacts.concert_current_version})\n- Branch: ${update_git_job.artifacts.git_branch}\n- Commit: ${update_git_job.artifacts.git_commit_sha}\n- Image: ${monitor_tekton_job.artifacts.container_image}\n\nValidation result:\n- Status: ${validate_job.artifacts.validation_status}\n- ArgoCD sync status: ${validate_job.artifacts.argocd_sync_status}\n- ArgoCD revision: ${validate_job.artifacts.argocd_revision}\n- Running image: ${validate_job.artifacts.running_image}\n- Reported version: ${validate_job.artifacts.deployed_version}\n\nOwning team: ${concert_sbom_job.artifacts.concert_owner_team}\nDownstream consumers: ${concert_topology_job.artifacts.concert_dependency_count}\n\nDecide whether to roll back now or hold, and say exactly what a human should run. Because this is GitOps, rollback is an ArgoCD revision revert, not an SSH session.\n\nOutput ONLY valid JSON:\n{\n  \"recommended_action\": \"rollback or hold\",\n  \"reasoning\": \"one sentence\",\n  \"rollback_command\": \"the exact argocd command, or empty string if holding\",\n  \"notify\": [\"team or role to page\"],\n  \"concert_state\": \"one line confirming inventory was intentionally not written back\"\n}",
+        "llm_model_id": "8ff83f47-b868-41d7-9dfa-906dbcda1a74",
+        "credential_id": "383e035e-482f-4fc5-912c-ef65ad28d66b",
+        "response_schema": {
+          "type": "object",
+          "properties": {
+            "recommended_action": {
+              "type": "string"
+            },
+            "reasoning": {
+              "type": "string"
+            },
+            "rollback_command": {
+              "type": "string"
+            },
+            "notify": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "concert_state": {
+              "type": "string"
+            }
+          }
+        },
+        "tool_selection_strategy": "NONE"
+      }
+    },
+    {
+      "id": "schedule_agent",
+      "name": "[AI] Non-Production - Queue for Next Window",
+      "type": "agentic",
+      "position": {
+        "x": 2100,
+        "y": 780
+      },
+      "parameters": {
+        "prompt": "A Lightwell remediated package is available and the portfolio is affected, but this application has no production deployment or the fix is not urgent. We are deferring, not ignoring.\n\n- Package: ${trigger.package_name} ${trigger.package_version}\n- Fixes: ${trigger.fixes_cve} (severity ${trigger.severity})\n- Applications still on an older build: ${concert_sbom_job.artifacts.concert_total_affected}\n- Deployments: ${concert_topology_job.artifacts.concert_deployment_count}\n- Has production deployment: ${concert_topology_job.artifacts.concert_has_prod_deployment}\n- Owning team: ${concert_sbom_job.artifacts.concert_owner_team}\n\nProduce the deferral record.\n\nOutput ONLY valid JSON:\n{\n  \"decision\": \"one line on what is being deferred and why that is safe\",\n  \"suggested_window\": \"e.g. next scheduled maintenance window\",\n  \"owner\": \"team that must action it\",\n  \"revisit_if\": \"the condition that should escalate this to auto_update\"\n}",
+        "llm_model_id": "8ff83f47-b868-41d7-9dfa-906dbcda1a74",
+        "credential_id": "383e035e-482f-4fc5-912c-ef65ad28d66b",
+        "response_schema": {
+          "type": "object",
+          "properties": {
+            "decision": {
+              "type": "string"
+            },
+            "suggested_window": {
+              "type": "string"
+            },
+            "owner": {
+              "type": "string"
+            },
+            "revisit_if": {
+              "type": "string"
+            }
+          }
+        },
+        "tool_selection_strategy": "NONE"
+      }
+    },
+    {
+      "id": "log_only_agent",
+      "name": "[AI] Portfolio Not Affected - Log Only",
+      "type": "agentic",
+      "position": {
+        "x": 2100,
+        "y": 1080
+      },
+      "parameters": {
+        "prompt": "A Lightwell remediated package was published, but Concert's SBOM inventory shows nothing in the portfolio is on an older build of it. No action is required. Record the negative result - proving we checked is the point.\n\n- Package: ${trigger.package_name} ${trigger.package_version}\n- Fixes: ${trigger.fixes_cve}\n- Applications on an older build: ${concert_sbom_job.artifacts.concert_total_affected}\n- Target app found in inventory: ${concert_sbom_job.artifacts.concert_target_app_found}\n\nOutput ONLY valid JSON:\n{\n  \"finding\": \"one line stating the portfolio was checked and is clean\",\n  \"packages_checked\": \"${trigger.package_name}\",\n  \"action_required\": false\n}",
+        "llm_model_id": "8ff83f47-b868-41d7-9dfa-906dbcda1a74",
+        "credential_id": "383e035e-482f-4fc5-912c-ef65ad28d66b",
+        "response_schema": {
+          "type": "object",
+          "properties": {
+            "finding": {
+              "type": "string"
+            },
+            "packages_checked": {
+              "type": "string"
+            },
+            "action_required": {
+              "type": "boolean"
+            }
+          }
+        },
+        "tool_selection_strategy": "NONE"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "trigger_package",
+      "to": "concert_sbom_job"
+    },
+    {
+      "from": "concert_sbom_job",
+      "to": "concert_topology_job"
+    },
+    {
+      "from": "concert_topology_job",
+      "to": "impact_agent"
+    },
+    {
+      "from": "impact_agent",
+      "to": "route_switch"
+    },
+    {
+      "from": "route_switch",
+      "to": "update_git_job",
+      "from_port": "case_0"
+    },
+    {
+      "from": "route_switch",
+      "to": "approval_downstream",
+      "from_port": "case_1"
+    },
+    {
+      "from": "route_switch",
+      "to": "schedule_agent",
+      "from_port": "case_2"
+    },
+    {
+      "from": "route_switch",
+      "to": "log_only_agent",
+      "from_port": "case_3"
+    },
+    {
+      "from": "approval_downstream",
+      "to": "update_git_job",
+      "from_port": "approved"
+    },
+    {
+      "from": "update_git_job",
+      "to": "monitor_tekton_job"
+    },
+    {
+      "from": "monitor_tekton_job",
+      "to": "validate_job"
+    },
+    {
+      "from": "validate_job",
+      "to": "validation_switch"
+    },
+    {
+      "from": "validation_switch",
+      "to": "update_concert_job",
+      "from_port": "case_0"
+    },
+    {
+      "from": "validation_switch",
+      "to": "rollback_agent",
+      "from_port": "default"
+    },
+    {
+      "from": "update_concert_job",
+      "to": "audit_summary_agent"
+    }
+  ]
+}

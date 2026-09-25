@@ -48,7 +48,7 @@ The workshop sidebar tabs map directly to the infrastructure in `config/instance
 | Target application route on OpenShift (check `/health`)
 
 | **OpenShift**
-| Cluster console
+| Cluster console (pending — see note below)
 | Tekton PipelineRuns, ArgoCD Applications, pods in the `production` namespace
 
 | **Concert**
@@ -61,6 +61,16 @@ The workshop sidebar tabs map directly to the infrastructure in `config/instance
 |===
 
 When a step says "click the **Flask App** tab" or "open the **Terminal** tab", use the sidebar — do not invent hostnames or ports.
+
+[NOTE]
+====
+**OpenShift tab pending.** This environment still provisions the Gitea container
+and the rhel01 baseline application while the migration to an OpenShift cluster is
+in progress, so the sidebar currently shows a **Gitea** tab rather than an
+**OpenShift** tab. Where a step says to use the **OpenShift** tab, run the
+equivalent `oc` or `argocd` command from the **Terminal** tab until the cluster is
+available.
+====
 
 == Lab Modules
 

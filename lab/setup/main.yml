@@ -5,6 +5,8 @@
 #   Phase 0: Deploy Flask application baseline
 #   Phase 1: Configure Tekton pipeline and ArgoCD application
 #   Phase 2: Configure AAP Controller resources
+#   Phase 2b: Bind this lab to the shared Automation Orchestrator
+#   Phase 2c: Configure EDA Controller
 #   Phase 3: Configure Concert integration
 
 # ── Phase 0: Application Deployment ──────────────────────────────────
@@ -19,8 +21,14 @@
 - name: "Phase 2: Configure AAP Controller resources"
   ansible.builtin.import_playbook: configure-aap.yml
 
-# ── Phase 2b: EDA Controller ─────────────────────────────────────────
-- name: "Phase 2b: Configure EDA Controller (credential, project, activation)"
+# ── Phase 2b: Automation Orchestrator binding ────────────────────────
+# Must follow Phase 2 -- AO resolves this lab's job templates by name, so they
+# have to exist on AAP before the AO workflow can be rendered and published.
+- name: "Phase 2b: Bind this lab to Automation Orchestrator"
+  ansible.builtin.import_playbook: configure-ao.yml
+
+# ── Phase 2c: EDA Controller ─────────────────────────────────────────
+- name: "Phase 2c: Configure EDA Controller (credential, project, activation)"
   ansible.builtin.import_playbook: configure-eda.yml
 
 # ── Phase 3: Artifactory Trigger ─────────────────────────────────────

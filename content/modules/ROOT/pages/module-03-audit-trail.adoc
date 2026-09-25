@@ -112,7 +112,8 @@ Timestamp: 2026-09-25 14:20:33 UTC
 Source: Artifactory (lightwell-remediated)
 Event Type: Package Published
 Payload: pyyaml 6.0.2 (artifact pyyaml-6.0.2.rhlw-00456, fixes CVE-2026-52891, critical)
-Action Taken: Triggered Workflow "Lightwell Proactive Update Orchestrator"
+Action Taken: Ran Job Template "AO - Trigger Proactive Update Workflow"
+Handed Off To: Automation Orchestrator workflow "Lightwell Proactive Update"
 Job ID: 67890
 Status: Success
 ----
@@ -127,13 +128,15 @@ This proves:
 
 == Step 4: Automation Orchestrator Job History
 
-Navigate to **Jobs** and click into the completed `Lightwell Proactive Update Orchestrator` workflow.
+Open the Automation Orchestrator workflow run for your lab — the relay job's
+output printed its URL, and it is also recorded in `/etc/lightwell-lab/ao-binding.yml`
+on your control node.
 
 The workflow details show:
 
 [source,text]
 ----
-Workflow #67890: Lightwell Proactive Update Orchestrator
+Workflow: Lightwell Proactive Update
 Status: Success
 Started: 2026-09-25 14:20:35 UTC
 Finished: 2026-09-25 14:23:45 UTC
