@@ -123,7 +123,7 @@
           if __name__ == '__main__':
               app.run(host='0.0.0.0', port={{ app_port }}, debug=False)
 
-    - name: Deploy requirements.txt with vulnerable PyYAML
+    - name: Deploy requirements.txt with pre-update PyYAML
       ansible.builtin.copy:
         dest: "{{ flask_app_dir }}/requirements.txt"
         owner: "{{ flask_app_user }}"
@@ -131,7 +131,7 @@
         mode: '0644'
         content: |
           flask==2.3.2
-          pyyaml=={{ vulnerable_version }}
+          pyyaml=={{ current_version }}
           requests==2.31.0
           gunicorn==21.2.0
 

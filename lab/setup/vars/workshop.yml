@@ -2,18 +2,17 @@
 # Concert + AAP + Lightwell Lab -- Workshop Setup Variables
 # Referenced by all setup playbooks via vars_files
 
-# CVE and application targeting
-target_cve: CVE-2026-52891
+# Lightwell package and application targeting
+lightwell_package: pyyaml
+current_version: "5.4.1"
+lightwell_version: "6.0.2"
+fixes_cve: CVE-2026-52891
 target_cwe: CWE-502
-vulnerable_package: pyyaml
-vulnerable_version: "5.4.1"
-fixed_version: "6.0.2"
 target_app: flask-api-app
 
 # Workshop scenario
 company_name: "Concert Demo Corp"
 app_port: 80
-gitea_port: 3000
 
 # AAP Controller (shared or per-lab)
 # From the control VM use localhost — hostname "control" may resolve to eth1
@@ -34,29 +33,43 @@ control_host: control
 
 # AAP resource names
 workshop_org: Default
-workshop_project_name: "Concert CVE Remediation"
+workshop_project_name: "Lightwell Proactive Updates"
 workshop_inventory_name: "Concert Lab Inventory"
 workshop_credential_name: "Lab Machine Credential"
+workshop_ocp_credential_name: "Lab OpenShift Credential"
 workshop_ee_name: "Default execution environment"
 
-# Gitea SCM
-gitea_url: "http://gitea:3000"
-gitea_repo: "labuser/flask-api-app"
-gitea_admin_user: gitea
-gitea_admin_password: ansible123!
-gitea_lab_user: labuser
-gitea_lab_password: ansible123!
+# Application source repository
+app_repo_url: "https://github.com/labuser/flask-api-app"
+app_repo_branch: main
+
+# GitOps repository (ArgoCD watches this)
+gitops_repo_url: "https://github.com/labuser/flask-api-app-gitops"
+gitops_manifest_path: "apps/flask-api-app/overlays/production"
+
+# OpenShift / Tekton / ArgoCD
+ocp_api_url: "{{ lookup('env', 'OCP_API_URL') }}"
+ocp_token: "{{ lookup('env', 'OCP_TOKEN') }}"
+tekton_namespace: ci-cd
+tekton_pipeline_name: flask-api-app-build
+argocd_namespace: openshift-gitops
+argocd_app_name: flask-api-app
+app_namespace: production
+app_route: "{{ lookup('env', 'APP_ROUTE') | default('https://flask-api-app.apps.ocp.example.com', true) }}"
+container_registry: "quay.io/labuser"
+
+# Artifactory (Lightwell package store, source of the EDA trigger)
+artifactory_url: "{{ lookup('env', 'ARTIFACTORY_URL') }}"
+artifactory_token: "{{ lookup('env', 'ARTIFACTORY_TOKEN') }}"
+artifactory_lightwell_repo: "lightwell-remediated"
 
 # Concert (shared cloud instance)
 concert_api_url: "{{ lookup('env', 'CONCERT_API_URL') }}"
 concert_api_token: "{{ lookup('env', 'CONCERT_API_TOKEN') }}"
-concert_workflow_name: "Concert-AAP CVE Remediation Handler"
 
-# Lightwell (shared service)
-lightwell_api_url: "{{ lookup('env', 'LIGHTWELL_API_URL') }}"
-lightwell_api_token: "{{ lookup('env', 'LIGHTWELL_API_TOKEN') }}"
-
-# Flask application paths
+# Baseline Flask application on rhel01 (pre-migration reference deployment)
+# NOTE: the lab's remediation path now deploys to OpenShift via Tekton + ArgoCD.
+# These paths only drive the Phase 0 baseline app that still runs on rhel01.
 flask_app_dir: /opt/flask-app
 flask_app_user: labuser
 flask_app_service: flask-app

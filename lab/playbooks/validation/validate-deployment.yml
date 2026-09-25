@@ -1,0 +1,105 @@
+---
+# Validate ArgoCD Deployment
+# Confirms ArgoCD synced the updated manifests, pods are healthy on the new image,
+# and the running application reports the Lightwell package version.
+
+- name: Validate Lightwell update deployment
+  hosts: localhost
+  gather_facts: true
+  connection: local
+  vars:
+    package_name: "{{ package_name | default('pyyaml') }}"
+    expected_version: "{{ package_version | default('6.0.2') }}"
+    app_name: "{{ app_name | default('flask-api-app') }}"
+    app_namespace: "{{ app_namespace | default('production') }}"
+    argocd_namespace: "{{ argocd_namespace | default('openshift-gitops') }}"
+    app_route: "{{ app_route | default('https://flask-api-app.apps.ocp.example.com') }}"
+
+  tasks:
+    - name: Wait for ArgoCD Application to be Synced and Healthy
+      kubernetes.core.k8s_info:
+        api_version: argoproj.io/v1alpha1
+        kind: Application
+        namespace: "{{ argocd_namespace }}"
+        name: "{{ app_name }}"
+      register: argocd_app
+      retries: 30
+      delay: 10
+      until: >-
+        argocd_app.resources[0].status.sync.status | default('') == 'Synced' and
+        argocd_app.resources[0].status.health.status | default('') == 'Healthy'
+
+    - name: Get application Deployment
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        namespace: "{{ app_namespace }}"
+        name: "{{ app_name }}"
+      register: app_deployment
+
+    - name: Verify all replicas are ready
+      ansible.builtin.assert:
+        that:
+          - app_deployment.resources[0].status.readyReplicas | default(0) ==
+            app_deployment.resources[0].spec.replicas
+        fail_msg: >-
+          Only {{ app_deployment.resources[0].status.readyReplicas | default(0) }} of
+          {{ app_deployment.resources[0].spec.replicas }} replicas are ready
+        success_msg: "All {{ app_deployment.resources[0].spec.replicas }} replicas ready"
+
+    - name: Record running container image
+      ansible.builtin.set_fact:
+        running_image: "{{ app_deployment.resources[0].spec.template.spec.containers[0].image }}"
+
+    - name: Test application health endpoint
+      ansible.builtin.uri:
+        url: "{{ app_route }}/health"
+        return_content: true
+        validate_certs: false
+      register: health_check
+      retries: 10
+      delay: 5
+      until: health_check.status == 200
+
+    - name: Verify application reports the Lightwell package version
+      ansible.builtin.assert:
+        that:
+          - health_check.json[package_name + '_version'] is version(expected_version, '>=')
+        fail_msg: >-
+          Application reports {{ package_name }}
+          {{ health_check.json[package_name + '_version'] | default('unknown') }},
+          expected >= {{ expected_version }}
+        success_msg: "Application reports {{ package_name }} {{ expected_version }}"
+
+    - name: Test YAML parsing endpoint
+      ansible.builtin.uri:
+        url: "{{ app_route }}/api/parse-yaml"
+        method: POST
+        body: "name: test\nvalue: 123"
+        headers:
+          Content-Type: text/plain
+        return_content: true
+        validate_certs: false
+      register: yaml_parse_test
+
+    - name: Display validation results
+      ansible.builtin.debug:
+        msg:
+          - "Lightwell update validated ✓"
+          - "Package: {{ package_name }} {{ expected_version }}"
+          - "ArgoCD Sync: {{ argocd_app.resources[0].status.sync.status }}"
+          - "ArgoCD Health: {{ argocd_app.resources[0].status.health.status }}"
+          - "Running Image: {{ running_image }}"
+          - "Replicas Ready: {{ app_deployment.resources[0].status.readyReplicas }}/{{ app_deployment.resources[0].spec.replicas }}"
+          - "Application Health: {{ health_check.json.status | default('ok') }}"
+          - "YAML Parsing: Functional"
+
+    - name: Set stats for AAP workflow
+      ansible.builtin.set_stats:
+        data:
+          validation_status: "success"
+          deployed_version: "{{ expected_version }}"
+          running_image: "{{ running_image }}"
+          argocd_sync_status: "{{ argocd_app.resources[0].status.sync.status }}"
+          argocd_revision: "{{ argocd_app.resources[0].status.sync.revision | default('') }}"
+          validation_timestamp: "{{ ansible_date_time.iso8601 }}"

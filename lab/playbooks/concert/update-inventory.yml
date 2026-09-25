@@ -1,17 +1,19 @@
 ---
 # Update Concert SBOM Inventory
-# Updates application's SBOM with new package version after remediation
+# Updates application's SBOM with new package version after the Lightwell update
+# has been deployed and validated.
 #
 # Required extra vars:
 #   application: Application name (e.g., flask-api-app)
 #   package: Package name (e.g., pyyaml)
-#   previous_version: Version before remediation
-#   new_version: Version after remediation
+#   previous_version: Version before the update
+#   new_version: Lightwell remediated version now deployed
 #   validation_passed: Boolean indicating validation success
+#   container_image: Image reference ArgoCD deployed (optional)
 
 - name: Update Concert SBOM Inventory
   hosts: localhost
-  gather_facts: false
+  gather_facts: true
   vars:
     concert_url: "{{ lookup('env', 'CONCERT_URL') | default('https://concert.example.com') }}"
     concert_api_key: "{{ lookup('env', 'CONCERT_API_KEY') }}"
@@ -20,6 +22,7 @@
     previous_version: "{{ previous_version }}"
     new_version: "{{ new_version }}"
     validation_passed: "{{ validation_passed | default(false) }}"
+    container_image: "{{ container_image | default('') }}"
 
   tasks:
     - name: Update Concert inventory with new SBOM data
@@ -34,8 +37,10 @@
           package: "{{ package }}"
           previous_version: "{{ previous_version }}"
           new_version: "{{ new_version }}"
-          remediation_timestamp: "{{ ansible_date_time.iso8601 }}"
+          update_timestamp: "{{ ansible_date_time.iso8601 }}"
           validation_passed: "{{ validation_passed }}"
+          deployment_method: "tekton-argocd"
+          container_image: "{{ container_image }}"
         validate_certs: false
         status_code: [200, 204]
       register: concert_update_response
@@ -49,9 +54,10 @@
           Application: {{ application }}
           Package: {{ package }}
           Version Change: {{ previous_version }} → {{ new_version }}
+          Container Image: {{ container_image | default('N/A') }}
           Validation: {{ 'PASSED ✓' if validation_passed else 'FAILED ✗' }}
           Timestamp: {{ ansible_date_time.iso8601 }}
 
           Concert's SBOM inventory for {{ application }} has been updated.
-          CVE queries will now reflect the new package version.
+          Portfolio queries will now reflect the new package version.
           ==========================================

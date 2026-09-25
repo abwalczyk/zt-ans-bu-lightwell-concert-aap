@@ -1,0 +1,12 @@
+{
+  "package_name": "pyyaml",
+  "package_version": "6.0.2",
+  "artifact_id": "pyyaml-6.0.2.rhlw-00456",
+  "repository": "lightwell-remediated",
+  "artifact_url": "https://artifactory.example.com/lightwell-remediated/pyyaml-6.0.2.rhlw-00456",
+  "checksum": "sha256:abc123def456789abc123def456789abc123def456789abc123def456789abcd",
+  "remediation_info": {
+    "fixes_cve": ["CVE-2026-52891"],
+    "severity": "critical"
+  }
+}

@@ -1,0 +1,83 @@
+---
+# Monitor Tekton PipelineRun
+# The git push from update-dependency-git.yml fires a Tekton EventListener, which
+# creates a PipelineRun. This polls that PipelineRun to completion and reports the
+# container image it produced.
+
+- name: Monitor Tekton PipelineRun to completion
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    tekton_namespace: "{{ tekton_namespace | default('ci-cd') }}"
+    pipeline_name: "{{ pipeline_name | default('flask-api-app-build') }}"
+    git_commit_sha: "{{ git_commit_sha }}"
+    poll_retries: 60
+    poll_delay: 10
+
+  tasks:
+    - name: Find PipelineRun for this commit
+      kubernetes.core.k8s_info:
+        api_version: tekton.dev/v1
+        kind: PipelineRun
+        namespace: "{{ tekton_namespace }}"
+        label_selectors:
+          - "tekton.dev/pipeline={{ pipeline_name }}"
+      register: pipelinerun_list
+      retries: 12
+      delay: 5
+      until: >-
+        pipelinerun_list.resources
+        | selectattr('metadata.labels["lightwell/commit-sha"]', 'defined')
+        | selectattr('metadata.labels["lightwell/commit-sha"]', 'equalto', git_commit_sha[:12])
+        | list | length > 0
+
+    - name: Record PipelineRun name
+      ansible.builtin.set_fact:
+        pipelinerun_name: >-
+          {{ (pipelinerun_list.resources
+              | selectattr('metadata.labels["lightwell/commit-sha"]', 'equalto', git_commit_sha[:12])
+              | first).metadata.name }}
+
+    - name: Wait for PipelineRun to complete
+      kubernetes.core.k8s_info:
+        api_version: tekton.dev/v1
+        kind: PipelineRun
+        namespace: "{{ tekton_namespace }}"
+        name: "{{ pipelinerun_name }}"
+      register: pipelinerun
+      retries: "{{ poll_retries }}"
+      delay: "{{ poll_delay }}"
+      until: >-
+        pipelinerun.resources[0].status.conditions[0].status | default('Unknown') != 'Unknown'
+
+    - name: Assert pipeline succeeded
+      ansible.builtin.assert:
+        that:
+          - pipelinerun.resources[0].status.conditions[0].status == 'True'
+        fail_msg: >-
+          Tekton PipelineRun {{ pipelinerun_name }} failed:
+          {{ pipelinerun.resources[0].status.conditions[0].message | default('no message') }}
+        success_msg: "Tekton PipelineRun {{ pipelinerun_name }} succeeded"
+
+    - name: Extract produced image reference
+      ansible.builtin.set_fact:
+        container_image: >-
+          {{ (pipelinerun.resources[0].status.results | default([])
+              | selectattr('name', 'equalto', 'IMAGE_URL')
+              | map(attribute='value') | first | default('')) }}
+
+    - name: Display pipeline results
+      ansible.builtin.debug:
+        msg:
+          - "PipelineRun: {{ pipelinerun_name }}"
+          - "Status: SUCCESS"
+          - "Container Image: {{ container_image }}"
+          - "Commit: {{ git_commit_sha }}"
+
+    - name: Set stats for AAP workflow
+      ansible.builtin.set_stats:
+        data:
+          tekton_pipelinerun: "{{ pipelinerun_name }}"
+          tekton_status: "success"
+          container_image: "{{ container_image }}"

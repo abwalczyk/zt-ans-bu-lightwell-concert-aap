@@ -1,0 +1,31 @@
+---
+# EDA Rulebook: Lightwell Package Ingestion
+# Canonical copy for EDA SCM sync lives at extensions/eda/rulebooks/lightwell-package-alert.yml
+# Keep this path in sync for lab docs / tree layout.
+
+- name: Lightwell Package Processing
+  hosts: all
+  sources:
+    - ansible.eda.webhook:
+        host: 0.0.0.0
+        port: 5000
+
+  rules:
+    - name: Trigger AO Workflow on new Lightwell package
+      condition: >-
+        event.payload.package_name is defined and
+        event.payload.package_version is defined and
+        event.payload.repository is search("lightwell")
+      action:
+        run_workflow_template:
+          name: "Lightwell Proactive Update Orchestrator"
+          organization: "Default"
+          extra_vars:
+            package_name: "{{ event.payload.package_name }}"
+            package_version: "{{ event.payload.package_version }}"
+            artifact_id: "{{ event.payload.artifact_id | default('') }}"
+            artifact_url: "{{ event.payload.artifact_url | default('') }}"
+            artifact_checksum: "{{ event.payload.checksum | default('') }}"
+            source_repository: "{{ event.payload.repository }}"
+            fixes_cve: "{{ event.payload.remediation_info.fixes_cve | default([]) }}"
+            severity: "{{ event.payload.remediation_info.severity | default('unknown') }}"

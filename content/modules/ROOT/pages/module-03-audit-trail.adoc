@@ -1,235 +1,277 @@
-= Module 3: Audit Trail
+= Module 3: Validate — Audit Trail
 
 == Module Overview
 
-In this module, you'll review the complete audit trail across all systems involved in the remediation. This demonstrates compliance and accountability for automated CVE remediation.
+In this module, you'll review the complete audit trail across all systems involved in the update. This demonstrates compliance and accountability for automated dependency management.
 
 **Learning Objectives:**
 
-* Review Concert's CVE status update
+* Review Concert's updated SBOM inventory
 * Understand the complete audit trail across systems
-* See how automated remediation maintains compliance
+* See how automated updates maintain compliance
 
 **Estimated time**: 10 minutes
 
 == The Importance of Audit Trails
 
-Automated remediation is powerful, but enterprises need accountability and compliance:
+Automated updates are powerful, but enterprises need accountability and compliance:
 
 * **Regulatory requirements**: SOC 2, ISO 27001, PCI DSS require audit trails for security changes
 * **Change management**: Track who/what made changes, when, and why
-* **Incident response**: Investigate if a remediation caused issues
-* **Compliance reporting**: Prove to auditors that CVEs were addressed
+* **Incident response**: Investigate if an update caused issues
+* **Compliance reporting**: Prove to auditors that known vulnerabilities were addressed
 
 This lab demonstrates **end-to-end auditability** across:
 
-* Security scanners
-* IBM Concert
+* Artifactory package publication
 * Event-Driven Ansible
 * Automation Orchestrator
-* Gitea source control
-* CI/CD pipeline
-* Application deployment
+* IBM Concert
+* Git source control
+* Tekton pipelines
+* ArgoCD GitOps delivery
+* Application runtime
 
-== Step 1: Review Concert CVE Status
+Note that this chain has a property the reactive model lacks: it starts with a *signed, verified artifact*, not an alert. The provenance of the fix is part of the evidence.
 
-After successful remediation, the Automation Orchestrator workflow updates Concert's Action Center.
+== Step 1: Review Concert SBOM Inventory
+
+After a successful update, the Automation Orchestrator workflow patches Concert's inventory.
 
 In the Automation Controller job output, look for:
 
 [source,text]
 ----
-TASK [Update Concert CVE status]
+TASK [Update Concert inventory with new SBOM data]
 ok: [localhost]
 
-TASK [Display Concert update response]
+TASK [Display Concert inventory update results]
 ok: [localhost] => {
-    "concert_response": {
-        "cve_id": "CVE-2026-52891",
-        "status": "RESOLVED",
-        "resolution_timestamp": "2026-09-17T10:35:42Z",
-        "resolution_method": "AUTOMATED_LIGHTWELL_PACKAGE",
-        "affected_apps_remaining": 0,
-        "resolved_by": "automation-orchestrator",
-        "verification": {
-            "package": "PyYAML",
-            "previous_version": "5.4.1",
-            "current_version": "6.0.2",
-            "deployment": "rhel01.example.com",
-            "verified_at": "2026-09-17T10:35:40Z"
-        }
-    }
+    "msg": "==========================================
+      Concert Inventory Updated
+      ==========================================
+      Application: flask-api-app
+      Package: pyyaml
+      Version Change: 5.4.1 → 6.0.2
+      Container Image: quay.io/labuser/flask-api-app:a1b2c3d4
+      Validation: PASSED ✓
+      Timestamp: 2026-09-25T14:23:45Z
+      =========================================="
 }
 ----
 
 **Concert now shows**:
 
-* **CVE Status**: RESOLVED (was OPEN)
-* **Affected Applications**: 0 (was 1)
-* **Resolution Time**: 5 minutes 42 seconds from initial alert
-* **Resolution Method**: Automated via Lightwell package
+* **Portfolio drift**: 11 applications on an older PyYAML (was 12)
+* **flask-api-app**: pyyaml 6.0.2, updated and validated
+* **Deployment method**: `tekton-argocd`, with the exact image reference
+* **Resolution time**: ~3 minutes from package publish to validated deployment
 
-Concert's Action Center maintains a historical record of:
+Concert's inventory maintains a historical record of:
 
-* When the CVE was discovered
-* Which applications were affected
-* How it was remediated
-* When it was verified as resolved
+* When the Lightwell package became available
+* Which applications were running an older version
+* How each was updated
+* When each was verified as deployed
 
-== Step 2: Event-Driven Ansible Audit Log
+Open the **Concert** tab and query the package again to see the reduced count for yourself.
 
-Navigate to **Event-Driven Ansible > Activations > cve-scanner-webhook > History**.
+== Step 2: Artifactory Package Provenance
+
+The chain of evidence begins before any automation ran. In Artifactory, locate the published artifact:
+
+[source,text]
+----
+Repository:   lightwell-remediated
+Artifact:     pyyaml-6.0.2.rhlw-00456
+Published:    2026-09-25 14:20:31 UTC
+Checksum:     sha256:abc123def456
+Fixes:        CVE-2026-52891 (critical)
+Signed by:    Red Hat Lightwell
+----
+
+This proves:
+
+* **What**: The exact artifact, identified by immutable checksum
+* **From**: Red Hat Lightwell, cryptographically signed
+* **Why**: The CVE the build remediates
+* **When**: The moment the fix became available to the organization
+
+The checksum here is the same value carried in the EDA event payload and recorded in the AAP job variables — one identifier spans the whole trail.
+
+== Step 3: Event-Driven Ansible Audit Log
+
+Navigate to **Automation Decisions** → **Rulebook Activations** → **artifactory-lightwell-webhook** → **History**.
 
 Find the event that started this workflow:
 
 [source,text]
 ----
 Event ID: 12345
-Timestamp: 2026-09-17 10:30:00 UTC
-Source: Mythos Scanner
-Event Type: CVE Alert
-Payload: CVE-2026-52891 (PyYAML < 6.0.0, CVSS 9.8)
-Action Taken: Triggered Job Template "CVE Remediation Workflow"
+Timestamp: 2026-09-25 14:20:33 UTC
+Source: Artifactory (lightwell-remediated)
+Event Type: Package Published
+Payload: pyyaml 6.0.2 (artifact pyyaml-6.0.2.rhlw-00456, fixes CVE-2026-52891, critical)
+Action Taken: Triggered Workflow "Lightwell Proactive Update Orchestrator"
 Job ID: 67890
 Status: Success
 ----
 
 This proves:
 
-* **When**: The exact timestamp the CVE alert was received
-* **From**: Which scanner sent the alert
-* **What**: The CVE details and severity
+* **When**: The exact timestamp the package event was received
+* **From**: Which repository published it
+* **What**: The package, version, artifact ID, and what it fixes
 * **Action**: Which automation was triggered
 * **Outcome**: Whether it succeeded or failed
 
-== Step 3: Automation Orchestrator Job History
+== Step 4: Automation Orchestrator Job History
 
-Navigate to **Jobs** and click into the completed `CVE Remediation Workflow` job.
+Navigate to **Jobs** and click into the completed `Lightwell Proactive Update Orchestrator` workflow.
 
-The job details show:
+The workflow details show:
 
 [source,text]
 ----
-Job #67890: CVE Remediation Workflow
+Workflow #67890: Lightwell Proactive Update Orchestrator
 Status: Success
-Started: 2026-09-17 10:30:02 UTC
-Finished: 2026-09-17 10:35:42 UTC
-Duration: 5m 40s
+Started: 2026-09-25 14:20:35 UTC
+Finished: 2026-09-25 14:23:45 UTC
+Duration: 3m 10s
 
 Launch Type: Webhook (Event-Driven Ansible)
-Launched By: eda-activiation-cve-scanner-webhook
+Launched By: eda-activation-artifactory-lightwell-webhook
 
 Extra Variables:
-  cve_id: CVE-2026-52891
-  severity: CRITICAL
-  cvss_score: 9.8
-  package: PyYAML
-  scanner: Mythos
+  package_name: pyyaml
+  package_version: 6.0.2
+  artifact_id: pyyaml-6.0.2.rhlw-00456
+  artifact_checksum: sha256:abc123def456
+  source_repository: lightwell-remediated
+  fixes_cve: ["CVE-2026-52891"]
+  severity: critical
 
-Tasks Executed: 12
-Tasks Changed: 3
-Tasks Failed: 0
+Nodes Executed: 6
+  ✓ concert_sbom          Concert - Query SBOM Inventory
+  ✓ concert_topology      Concert - Query Topology
+  ✓ update_dependency     Lightwell - Update Dependency in Git
+  ✓ monitor_tekton        Lightwell - Monitor Tekton Pipeline
+  ✓ validate_deployment   Lightwell - Validate Deployment
+  ✓ update_concert        Concert - Update Inventory
 ----
 
-Click **Output** to see the complete task-by-task execution log with timestamps.
+Click into any node and select **Output** to see the complete task-by-task execution log with timestamps.
 
 This provides:
 
-* **Complete workflow execution log**: Every task that ran, in order
-* **Variables used**: CVE ID, package names, versions
-* **Results**: Concert assessment, Lightwell package info, validation results
-* **Duration**: How long each task took
+* **Complete workflow execution log**: Every node and task that ran, in order
+* **Variables used**: Package name, version, artifact provenance, severity
+* **Results**: Concert impact data, commit SHA, image reference, validation results
+* **Decision path**: Which branch the switch node took, and on what evidence
 
-== Step 4: Gitea Source Control History
+== Step 5: Git Source Control History
 
-Click the **Gitea** tab, log in (`labuser` / `ansible123!`), and navigate to **Repositories > flask-api-app > Commits**.
-
-Find the commit made by Automation Orchestrator:
+Open the application repository and find the commit made by the automation:
 
 [source,text]
 ----
-Commit: a1b2c3d4e5f6
-Author: automation-orchestrator <aap@example.com>
-Date: 2026-09-17 10:33:15 UTC
+Commit: a1b2c3d4e5f67890
+Author: Lightwell Automation <automation@lightwell.local>
+Date: 2026-09-25 14:21:02 UTC
+Branch: lightwell-update/pyyaml-6.0.2
 Message:
-  fix: upgrade PyYAML 5.4.1 → 6.0.2 (CVE-2026-52891)
-
-  Remediates CVE-2026-52891 (CVSS 9.8)
-  Lightwell package: PyYAML 6.0.2
-  Concert risk score: 95
-
-  Co-Authored-By: Automation Orchestrator
+  Update pyyaml to Lightwell remediated version 6.0.2 (fixes CVE-2026-52891)
 
 Changed files:
   requirements.txt | 1 change: 1 addition, 1 deletion
 ----
 
-Click **View Diff** to see:
+The diff:
 
 [source,diff]
 ----
-- PyYAML==5.4.1
-+ PyYAML==6.0.2
+- pyyaml==5.4.1
++ pyyaml==6.0.2  # Lightwell remediated package
 ----
 
 This Git history provides:
 
 * **What changed**: Exact code diff
-* **Who changed it**: Automation Orchestrator (not a human)
-* **Why it changed**: CVE-2026-52891 remediation
+* **Who changed it**: Lightwell Automation (not a human)
+* **Why it changed**: The Lightwell package and the CVE it remediates
 * **When it changed**: Exact timestamp
-* **Audit context**: CVE ID, CVSS score, Concert risk score
+* **Audit context**: Branch name encodes the package and target version
 
-== Step 5: CI/CD Pipeline Logs
+== Step 6: Tekton Pipeline Logs
 
-In Gitea, navigate to **Actions** and click on the workflow run that was triggered by the commit.
+In the **OpenShift** tab, navigate to **Pipelines** → **PipelineRuns** in the `ci-cd` project, and open the run for this commit.
 
-The pipeline log shows:
+The PipelineRun record shows:
 
 [source,text]
 ----
-Workflow: Build and Deploy
-Trigger: Push to main branch
-Commit: a1b2c3d4e5f6
-Started: 2026-09-17 10:33:16 UTC
-Completed: 2026-09-17 10:35:31 UTC
-Status: Success
+PipelineRun: flask-api-app-build-xk29f
+Pipeline:    flask-api-app-build
+Trigger:     EventListener (git push)
+Labels:      lightwell/commit-sha=a1b2c3d4e5f6
+Started:     2026-09-25 14:21:05 UTC
+Completed:   2026-09-25 14:22:40 UTC
+Status:      Succeeded
 
-Stage 1: Build (45s)
-  ✓ Checkout code
-  ✓ Install Python 3.11
-  ✓ Install dependencies (requirements.txt)
-  ✓ Verify PyYAML==6.0.2 installed
+git-clone      (8s)    ✓ Cloned at a1b2c3d4e5f67890
+run-tests      (1m 2s) ✓ pytest: 36 passed, 0 failed
+build-image    (18s)   ✓ buildah build
+push-image     (5s)    ✓ quay.io/labuser/flask-api-app:a1b2c3d4
+update-gitops  (2s)    ✓ Manifest image tag updated
 
-Stage 2: Test (1m 10s)
-  ✓ Run unit tests (24 passed, 0 failed)
-  ✓ Run integration tests (12 passed, 0 failed)
-  ✓ Security scan (0 critical CVEs detected)
-
-Stage 3: Deploy (30s)
-  ✓ Copy files to /opt/flask-app/
-  ✓ Update dependencies on target server
-
-Stage 4: Restart (10s)
-  ✓ Restart flask-app.service
-  ✓ Wait for health check
-  ✓ Application responding on port 80
+Results:
+  IMAGE_URL: quay.io/labuser/flask-api-app:a1b2c3d4
 ----
 
 This proves:
 
-* **Testing**: All tests passed before deployment
-* **Security validation**: No critical CVEs detected after update
-* **Deployment**: Exact steps taken to deploy the fix
-* **Verification**: Application health confirmed
+* **Testing**: All tests passed before any image was published
+* **Build provenance**: The image is tied to a specific commit by label and tag
+* **Immutability**: The published image is digest-addressable and cannot be altered in place
+* **Gating**: A test failure would have halted the workflow before deployment
 
-== Step 6: Application Runtime Validation
+== Step 7: ArgoCD Sync History
 
-Finally, verify the running application from the **Flask App** tab (`/version`) or the **Terminal** tab:
+In the ArgoCD console, open the `flask-api-app` Application and select **History and Rollback**.
+
+[source,text]
+----
+Application: flask-api-app
+Project:     default
+Source:      https://github.com/labuser/flask-api-app-gitops
+Path:        apps/flask-api-app/overlays/production
+
+Sync History:
+  Revision b7e4f21  2026-09-25 14:22:55 UTC  Succeeded  (current)
+    └─> image: quay.io/labuser/flask-api-app:a1b2c3d4
+  Revision 3c1a890  2026-09-18 09:14:02 UTC  Succeeded
+    └─> image: quay.io/labuser/flask-api-app:7f2e1d9
+
+Sync Policy: Automated (prune: true, selfHeal: true)
+Current Status: Synced / Healthy
+----
+
+This is the part a push-based pipeline cannot give you. The GitOps repository is a complete, ordered record of every state the cluster has been asked to hold — and each entry is a rollback target.
+
+This proves:
+
+* **Desired state**: What Git said should be running, at every point in time
+* **Actual state**: ArgoCD's continuous reconciliation confirms the cluster matches
+* **Drift protection**: `selfHeal` means manual cluster edits are reverted and visible
+* **Recoverability**: Any prior revision can be restored as a single operation
+
+== Step 8: Application Runtime Validation
+
+Finally, verify the running application from the **Flask App** tab (`/health`) or the **Terminal** tab:
 
 [source,bash]
 ----
-curl http://rhel01/version
+curl -s https://$(oc get route flask-api-app -n production -o jsonpath='{.spec.host}')/health
 ----
 
 Response:
@@ -237,13 +279,20 @@ Response:
 ----
 {
   "app": "flask-api",
-  "pyyaml_version": "6.0.2",
-  "uptime_seconds": 125,
-  "last_restart": "2026-09-17T10:35:31Z"
+  "status": "ok",
+  "pyyaml_version": "6.0.2"
 }
 ----
 
-The application is running the remediated version and has been up since the pipeline restarted it.
+And confirm the pods are running the expected image:
+
+[source,bash]
+----
+oc get pods -n production -l app=flask-api-app \
+  -o jsonpath='{.items[*].spec.containers[0].image}'
+----
+
+The application is running the remediated version across all 3 replicas.
 
 == Complete Audit Trail Timeline
 
@@ -251,54 +300,58 @@ Here's the complete timeline with audit evidence:
 
 [source,text]
 ----
-10:30:00  Security Scanner (Mythos)
-          └─> Detects CVE-2026-52891 in PyYAML
-          └─> Sends webhook to EDA
-          [Evidence: EDA event log]
+14:20:31  Artifactory / Red Hat Lightwell
+          └─> pyyaml 6.0.2 published to lightwell-remediated
+          └─> Signed artifact, sha256:abc123def456
+          [Evidence: Artifactory artifact metadata]
 
-10:30:02  Event-Driven Ansible
-          └─> Receives CVE alert webhook
+14:20:33  Event-Driven Ansible
+          └─> Receives Artifactory package webhook
           └─> Triggers Automation Orchestrator workflow
-          [Evidence: EDA activation history, AAP job created]
+          [Evidence: EDA activation history, AAP workflow created]
 
-10:30:05  Automation Orchestrator - Concert Query
-          └─> Queries Concert: "Which apps are affected?"
-          └─> Concert responds: flask-api (risk score 95)
-          [Evidence: AAP job output, Concert Action Center]
+14:20:36  Automation Orchestrator - Concert SBOM Query
+          └─> Queries Concert: "Which apps are on an older version?"
+          └─> Concert responds: 12 of 537, including flask-api-app
+          [Evidence: AAP job output, Concert inventory]
 
-10:30:08  Automation Orchestrator - Lightwell Query
-          └─> Queries Lightwell for remediated package
-          └─> Lightwell provides: PyYAML 6.0.2
-          [Evidence: AAP job output, Lightwell API response]
+14:20:39  Automation Orchestrator - Concert Arena View
+          └─> Queries topology for flask-api-app
+          └─> Production (3 replicas), 1 downstream dependency
+          [Evidence: AAP job output, Concert Arena View]
 
-10:33:15  Automation Orchestrator - Gitea Update
-          └─> Updates requirements.txt
-          └─> Commits to main branch
-          [Evidence: Git commit a1b2c3d4e5f6]
+14:20:42  Automation Orchestrator - Switch Node
+          └─> Production + critical severity → auto-update
+          [Evidence: AAP workflow node decision path]
 
-10:33:16  Gitea Actions
-          └─> CI/CD pipeline triggered
-          └─> Build → Test → Deploy → Restart
-          [Evidence: Gitea Actions workflow log]
+14:21:02  Automation Orchestrator - Git Update
+          └─> Branch lightwell-update/pyyaml-6.0.2
+          └─> requirements.txt updated, committed, pushed
+          [Evidence: Git commit a1b2c3d4e5f67890]
 
-10:35:31  Application Deployment
-          └─> flask-app.service restarted
-          └─> PyYAML 6.0.2 now running
-          [Evidence: Application /version endpoint]
+14:21:05  Tekton PipelineRun
+          └─> Clone → test → build → push → update GitOps
+          └─> quay.io/labuser/flask-api-app:a1b2c3d4
+          [Evidence: PipelineRun flask-api-app-build-xk29f]
 
-10:35:40  Automation Orchestrator - Validation
-          └─> Verifies PyYAML 6.0.2 deployed
-          └─> Confirms app health
+14:22:55  ArgoCD Sync
+          └─> Detected manifest drift, auto-synced
+          └─> Rolling update across 3 replicas
+          [Evidence: ArgoCD sync history, revision b7e4f21]
+
+14:23:30  Automation Orchestrator - Validation
+          └─> ArgoCD Synced/Healthy, 3/3 pods ready
+          └─> /health reports pyyaml 6.0.2
           [Evidence: AAP job output]
 
-10:35:42  Automation Orchestrator - Concert Update
-          └─> Updates Concert CVE status: RESOLVED
-          [Evidence: Concert Action Center, AAP job output]
+14:23:45  Automation Orchestrator - Concert Update
+          └─> SBOM patched, portfolio drift 12 → 11
+          [Evidence: Concert inventory, AAP job output]
 ----
 
-**Total time**: 5 minutes 42 seconds from alert to resolution.
+**Total time**: 3 minutes 14 seconds from package publish to validated deployment.
 
-**Every step is auditable**: Complete evidence chain from initial detection through verification.
+**Every step is auditable**: Complete evidence chain from signed artifact through running pod.
 
 == Compliance Benefits
 
@@ -309,58 +362,61 @@ This audit trail satisfies compliance requirements:
 * Evidence of timely vulnerability remediation
 * Automated controls reduce human error
 * Complete change history with timestamps
+* Signed artifact provenance from the upstream vendor
 
 **PCI DSS**:
 
 * Critical vulnerabilities remediated within required timeframes
 * Audit logs show who/what made changes
-* Testing performed before deployment
+* Testing performed before deployment, enforced as a gate
 
 **Change Management**:
 
-* Automated approvals based on Concert risk scoring
+* Automated routing based on Concert deployment and topology data
 * Code review via Git history
-* Rollback capability via Git revert
+* Rollback capability via ArgoCD revision history, not manual re-deploy
 
 **Incident Response**:
 
 * If issues arise, full timeline available
-* Exact version deployed is tracked
-* Can correlate with monitoring/logging
+* Exact image digest deployed is tracked
+* Single-command rollback to any prior synced revision
 
 == Module Summary
 
 You've completed Module 3! Here's what you reviewed:
 
-1. **Concert CVE status update** → RESOLVED with verification details
-2. **Event-Driven Ansible audit log** → When CVE alert was received and what action was taken
-3. **Automation Orchestrator job history** → Complete workflow execution with all task outputs
-4. **Gitea source control history** → Git commit showing exact code change with audit context
-5. **CI/CD pipeline logs** → Build, test, deploy, restart stages with security scanning
-6. **Application runtime validation** → Confirmed remediated version running
+1. **Concert SBOM inventory** → Updated, portfolio drift reduced from 12 to 11
+2. **Artifactory provenance** → Signed artifact with checksum, the origin of the whole chain
+3. **Event-Driven Ansible audit log** → When the package event arrived and what it triggered
+4. **Automation Orchestrator job history** → Complete workflow execution across all 6 nodes
+5. **Git source control history** → Commit showing the exact change with audit context
+6. **Tekton pipeline logs** → Test results and build provenance tied to the commit
+7. **ArgoCD sync history** → Desired-state record and rollback targets
+8. **Application runtime validation** → Confirmed version running across all replicas
 
-**Complete audit trail**: Every step from CVE detection to resolution is traceable and auditable.
+**Complete audit trail**: Every step from package publication to running pod is traceable and auditable.
 
 == Lab Complete!
 
-Congratulations! You've completed the Concert + AAP + Lightwell CVE Remediation Lab.
+Congratulations! You've completed the Concert + AAP + Lightwell Proactive Dependency Update Lab.
 
 You've learned:
 
-* How **IBM Concert** filters scanner noise and identifies affected applications via SBOM correlation
-* How **Concert risk scoring** drives automated remediation decisions
-* How **Automation Orchestrator** orchestrates multi-step remediation workflows
-* How **Red Hat Lightwell** provides verified, remediated packages
-* How **Gitea CI/CD** automates build, test, and deployment
+* How **Red Hat Lightwell** provides verified, remediated packages as the trigger for action
+* How **IBM Concert** resolves one package publish into a portfolio-wide work queue via SBOM correlation
+* How **Concert Arena View** exposes cross-team blast radius before anything changes
+* How **Automation Orchestrator** orchestrates multi-step update workflows and routing decisions
+* How **Tekton** builds and tests with provenance, and **ArgoCD** delivers via GitOps
 * How **complete audit trails** satisfy compliance requirements
 
 **What's Next?**
 
+* Fan the workflow out across all 12 affected applications, not just one
+* Add approval gates for applications with cross-team downstream dependencies
 * Explore Concert's Secure Coder capability for code-based remediations
-* Add more complex workflows (multi-app deployments, database migrations)
-* Integrate with your enterprise scanner (Mythos, Trivy, Qualys, etc.)
-* Connect to your real Concert and Lightwell instances
-* Customize risk scoring thresholds and approval workflows
+* Integrate with your real Artifactory, Concert, and Lightwell instances
+* Customize routing thresholds, change freezes, and policy checks in the AO switch node
 
 **Questions?**
 

@@ -1,14 +1,14 @@
-= Module 1: Concert Vulnerability Assessment
+= Module 1: Detect — Package Publish & Concert Impact Analysis
 
 == Module Overview
 
-In this module, you'll trigger a CVE alert from a security scanner and watch how IBM Concert identifies affected applications through its SBOM inventory and assesses the vulnerability's impact.
+In this module, you'll publish a new Lightwell remediated package to Artifactory and watch how IBM Concert instantly identifies every application in the portfolio still running an older version.
 
 **Learning Objectives:**
 
-* Understand how Event-Driven Ansible receives CVE alerts
-* See how Concert identifies affected applications from SBOM data
-* Learn how Concert assesses application impact and risk
+* Understand how Event-Driven Ansible reacts to a new Lightwell package event
+* See how Concert identifies affected applications from SBOM data, queried by package
+* Learn how Concert's Arena View topology exposes cross-team deployment impact
 
 **Estimated time**: 15 minutes
 
@@ -16,40 +16,40 @@ In this module, you'll trigger a CVE alert from a security scanner and watch how
 
 Use the workshop sidebar tabs for each step:
 
-* **Flask App** — vulnerable application on `rhel01` (route host `app`)
+* **Flask App** — target application route on OpenShift
 * **AAP** — Automation Controller on `control`
-* **Terminal** — SSH session on `control` (run `curl` commands here)
-* **Gitea** — Git repository and CI/CD
+* **Terminal** — SSH session on `control` (run `curl` and `oc` commands here)
+* **OpenShift** — cluster console for Tekton and ArgoCD
 * **Concert** — shared Concert UI
 
-== The Scanner Overload Problem
+== From Reactive to Proactive
 
-Modern security scanners like Mythos, Trivy, and others produce thousands of vulnerability alerts. In a typical enterprise environment:
+Most vulnerability automation is reactive: a scanner finds a problem, and a workflow scrambles to fix it. That model has a structural weakness — the clock starts when the *problem* is discovered, and you are always behind.
 
-* **Scanner Output**: 5,000+ vulnerabilities detected across your application portfolio
-* **False Positive Rate**: 99.9% of alerts are duplicates, not-exploitable, or not-applicable
-* **Manual Triage**: Takes security teams days or weeks to identify which vulnerabilities actually matter
+This lab inverts the trigger. The clock starts when the *fix* becomes available.
 
-**Concert's Solution**: Concert correlates scanner alerts with your enterprise SBOM inventory. Instead of manually checking 5,000 alerts, Concert instantly identifies the 12 vulnerabilities that are actually deployed in running applications.
+* **Lightwell publishes** a remediated package into Artifactory's `lightwell-remediated` repository
+* **Artifactory fires a webhook** describing the package and what it fixes
+* **Concert answers** the only question that matters: which of our 537 applications are still on an older version?
 
-== Step 1: View the Vulnerable Application
+Instead of chasing 5,000 scanner alerts, you act on a single trusted, verified artifact and fan it out across every application that needs it.
 
-First, verify that the Flask application is running with the vulnerable PyYAML version.
+== Step 1: View the Current Application State
+
+First, verify that the Flask application is running with the older PyYAML version.
 
 . Click the **Flask App** tab in the workshop sidebar.
 +
-This opens the application exposed from `rhel01` via the `app` route in `config/instances.yaml`.
+This opens the application route served by the `flask-api-app` Deployment in the `production` namespace.
 
-. Append `/version` to the URL in the address bar (or open that path directly) so you land on the version endpoint.
+. Append `/health` to the URL in the address bar (or open that path directly) so you land on the health endpoint.
 +
 Alternatively, open the **Terminal** tab and run:
 +
 [source,bash]
 ----
-curl http://rhel01/version
+curl -s https://$(oc get route flask-api-app -n production -o jsonpath='{.spec.host}')/health
 ----
-+
-From the Terminal on `control`, `rhel01` resolves on the lab secondary network.
 
 Expected output:
 
@@ -57,20 +57,31 @@ Expected output:
 ----
 {
   "app": "flask-api",
+  "status": "ok",
   "pyyaml_version": "5.4.1"
 }
 ----
 
-This confirms the application is using PyYAML 5.4.1, which contains CVE-2026-52891 (CVSS 9.8 - Critical).
+This confirms the application is using PyYAML 5.4.1 — the version Lightwell has just superseded.
+
+. Confirm the deployment is healthy before you begin:
++
+[source,bash]
+----
+oc get pods -n production -l app=flask-api-app
+----
++
+You should see 3 pods in `Running` state.
 
 ==== Verify
 
-* The **Flask App** tab loads the application JSON (or `/version` returns the payload above)
+* The **Flask App** tab loads the application JSON (or `/health` returns the payload above)
 * PyYAML version is `5.4.1`
+* 3 of 3 pods are `Running`
 
 == Step 2: Open Automation Controller and find the EDA activation
 
-Your security scanner (Mythos) has detected CVE-2026-52891 and will send a webhook to Event-Driven Ansible.
+Artifactory will send a webhook to Event-Driven Ansible when the new Lightwell package is published.
 
 . Click the **AAP** tab in the workshop sidebar.
 
@@ -83,20 +94,30 @@ Your security scanner (Mythos) has detected CVE-2026-52891 and will send a webho
 
 . Confirm the activation exists and is running:
 +
-* **Activation Name**: `cve-scanner-webhook`
+* **Activation Name**: `artifactory-lightwell-webhook`
 * **Status**: Running
-* **Description**: Receives CVE alerts from security scanners
+* **Description**: Receives new Lightwell package events from Artifactory
 
-This EDA activation listens for incoming CVE webhooks on port `5000` on the `control` host (service `eda-webhook` in `config/instances.yaml`).
+This EDA activation runs the rulebook `extensions/eda/rulebooks/lightwell-package-alert.yml` and listens on port `5000` on the `control` host (service `eda-webhook` in `config/instances.yaml`).
+
+The rulebook condition is deliberately narrow — it only fires for packages published into a Lightwell repository:
+
+[source,yaml]
+----
+condition: >-
+  event.payload.package_name is defined and
+  event.payload.package_version is defined and
+  event.payload.repository is search("lightwell")
+----
 
 ==== Verify
 
 * You can sign in to Automation Controller
-* Activation `cve-scanner-webhook` shows **Running**
+* Activation `artifactory-lightwell-webhook` shows **Running**
 
-== Step 3: Simulate Scanner Alert
+== Step 3: Simulate the Artifactory Package Publish
 
-In the real world, your security scanner would send this webhook automatically. For this lab, simulate it from the Terminal on `control`.
+In production, Artifactory sends this webhook automatically when Lightwell pushes a new build. For this lab, simulate it from the Terminal on `control`.
 
 . Click the **Terminal** tab.
 
@@ -107,13 +128,16 @@ In the real world, your security scanner would send this webhook automatically. 
 curl -X POST http://localhost:5000/webhook \
   -H "Content-Type: application/json" \
   -d '{
-    "cve_id": "CVE-2026-52891",
-    "severity": "CRITICAL",
-    "cvss_score": 9.8,
-    "package": "PyYAML",
-    "vulnerable_versions": "< 6.0.0",
-    "scanner": "Mythos",
-    "timestamp": "2026-09-17T10:30:00Z"
+    "package_name": "pyyaml",
+    "package_version": "6.0.2",
+    "artifact_id": "pyyaml-6.0.2.rhlw-00456",
+    "artifact_url": "https://artifactory.example.com/lightwell-remediated/pyyaml-6.0.2.rhlw-00456",
+    "checksum": "sha256:abc123def456",
+    "repository": "lightwell-remediated",
+    "remediation_info": {
+      "fixes_cve": ["CVE-2026-52891"],
+      "severity": "critical"
+    }
   }'
 ----
 
@@ -123,9 +147,11 @@ Expected output:
 ----
 {
   "status": "received",
-  "message": "CVE alert queued for processing"
+  "message": "Lightwell package event queued for processing"
 }
 ----
+
+Note what this payload carries: the artifact ID, URL, and checksum are all present in the event itself. There is no separate Lightwell API lookup step later in the workflow — the provenance travels with the trigger.
 
 ==== Verify
 
@@ -135,12 +161,12 @@ Expected output:
 
 . Return to the **AAP** tab.
 
-. Navigate to **Automation Decisions** → **Rulebook Activations** → **cve-scanner-webhook** → **Instances** / **History** (wording may vary slightly by AAP version).
+. Navigate to **Automation Decisions** → **Rulebook Activations** → **artifactory-lightwell-webhook** → **Instances** / **History** (wording may vary slightly by AAP version).
 
-. Find the new event for CVE-2026-52891. You should see something like:
+. Find the new event for the pyyaml package. You should see something like:
 +
-* **Event**: CVE-2026-52891 received
-* **Action**: Triggered job / workflow `CVE Remediation Workflow`
+* **Event**: pyyaml 6.0.2 published to `lightwell-remediated`
+* **Action**: Triggered workflow `Lightwell Proactive Update Orchestrator`
 * **Timestamp**: Just now
 
 . Click the linked job to open the Automation Orchestrator workflow run.
@@ -148,94 +174,145 @@ Expected output:
 ==== Verify
 
 * A new activation event/history entry appears after the webhook
-* A related Controller job/workflow was launched
+* A related Controller workflow was launched
 
-== Step 5: Automation Orchestrator Queries Concert
+== Step 5: Automation Orchestrator Queries Concert SBOM Inventory
 
 . In the **AAP** tab, open **Automation Execution** → **Jobs**.
 
-. Open the **CVE Remediation Workflow** job that was just triggered.
+. Open the **Concert - Query SBOM Inventory** job node inside the running workflow.
+
+This node runs `lab/playbooks/concert/query-sbom-by-package.yml`, which queries Concert *by package* rather than by CVE:
+
+[source,text]
+----
+GET /api/v1/inventory/packages/pyyaml/applications
+Body: { "older_than": "6.0.2" }
+----
 
 . Watch the job output. You should see tasks similar to:
 
 [source,text]
 ----
-TASK [Query Concert for affected applications]
+TASK [Query Concert inventory for applications using this package]
 ok: [localhost]
 
-TASK [Display Concert assessment]
+TASK [Display Concert SBOM inventory results]
 ok: [localhost] => {
-    "concert_assessment": {
-        "cve_id": "CVE-2026-52891",
-        "affected_apps": [
-            {
-                "name": "flask-api",
-                "host": "rhel01",
-                "current_version": "5.4.1",
-                "sbom_id": "flask-api-v1.0.0",
-                "deployment": "production",
-                "risk_score": 95
-            }
-        ],
-        "total_apps_scanned": 487,
-        "affected_count": 1,
-        "concert_recommendation": "REMEDIATE_IMMEDIATELY"
-    }
+    "msg": "==========================================
+      Concert SBOM Inventory Results
+      ==========================================
+      New Lightwell Package: pyyaml 6.0.2
+
+      PORTFOLIO-WIDE IMPACT:
+      Applications on an older version: 12
+      (Concert scanned 537 apps)
+
+      TARGET APPLICATION:
+      Name: flask-api-app
+      Found in affected list: YES
+      Current Version: 5.4.1
+      Owner Team: platform-team
+      Repository: https://github.com/labuser/flask-api-app
+      =========================================="
 }
 ----
 
 **Key Concert Capabilities Demonstrated:**
 
-* **SBOM Correlation**: Concert scanned its inventory of 487 applications and identified 1 affected app
-* **Risk Assessment**: Concert calculated a risk score of 95/100 based on:
-  - CVE severity (CVSS 9.8)
-  - Application criticality (production deployment)
-  - Exploitability (publicly known exploit)
-  - Exposure (internet-facing API)
-* **Actionable Intelligence**: Concert recommended immediate remediation
+* **SBOM Correlation**: Concert scanned its inventory of 537 applications and identified 12 still on an older PyYAML
+* **Package-centric query**: One published artifact resolves to a complete work queue, instantly
+* **Ownership context**: Each affected application carries its owning team, so the update can be routed correctly
 
 Without Concert, you would need to manually:
 
-1. Query all 487 applications for their Python dependencies
-2. Check each application's PyYAML version
-3. Assess which deployments are production vs. dev/test
-4. Prioritize based on risk and exposure
+1. Query all 537 applications for their Python dependencies
+2. Check each application's PyYAML version against 6.0.2
+3. Determine which deployments are production vs. dev/test
+4. Identify who owns each application
 
 Concert did this instantly by querying its pre-indexed SBOM database.
 
 Optionally open the **Concert** tab to explore the shared Concert UI while the workflow runs.
 
-== Step 6: Review Concert Action Center
+== Step 6: Review Concert Arena View Topology
 
-The workflow job pauses here and displays Concert's assessment. In a real Concert deployment, you could also view this in Concert's Action Center UI:
+The workflow's next node runs `lab/playbooks/concert/query-topology.yml`, which asks Concert a different question: what will this change touch?
 
-**Concert Action Center** shows:
+[source,text]
+----
+GET /api/v1/arena/applications/flask-api-app/topology
+----
 
-* **CVE**: CVE-2026-52891
-* **Affected Applications**: 1 (flask-api)
-* **Risk Score**: 95 (Critical)
-* **Recommended Action**: Remediate immediately
-* **Available Solutions**:
-  - Lightwell remediated package available (PyYAML 6.0.2)
-  - Concert Secure Coder can generate code changes
+[source,text]
+----
+TASK [Display Concert topology results]
+ok: [localhost] => {
+    "msg": "==========================================
+      Concert Arena View Topology
+      ==========================================
+      Application: flask-api-app
+      Repository: https://github.com/labuser/flask-api-app
 
-This is the intelligence that drives the automated remediation in Module 2.
+      DEPLOYMENTS:
+      Total Deployments: 2
+      - Environment: production
+        Namespace: production
+        Replicas: 3
+      - Environment: staging
+        Namespace: staging
+        Replicas: 1
+
+      DOWNSTREAM DEPENDENCIES:
+      Total Dependencies: 1
+      - api-gateway (owned by network-team)
+      =========================================="
+}
+----
+
+This is Concert's second unique contribution. The SBOM query told you *what* is affected; Arena View tells you *what breaks if you change it* — including services owned by other teams.
+
+== Step 7: Watch the AO Switch Node Decision
+
+With both Concert answers in hand, Automation Orchestrator — not Concert — makes the routing decision:
+
+[source,text]
+----
+if production_deployment and severity in ['critical', 'high']:
+    route = "auto-update"
+elif downstream_dependencies > 0:
+    route = "create-approval-request"
+else:
+    route = "queue-for-scheduled-update"
+----
+
+For `flask-api-app`, the switch node evaluates:
+
+* **Production deployment?** → Yes (3 replicas in `production`)
+* **Lightwell package severity?** → `critical` (fixes CVE-2026-52891)
+* **Decision**: Auto-update
+
+[NOTE]
+====
+The decision logic lives in Automation Orchestrator, not Concert. That separation matters: AO can factor in data Concert never sees — change freezes, business criticality tags, on-call state, OPA policy — without any change to Concert itself.
+====
 
 == Module Summary
 
 You've completed Module 1! Here's what happened:
 
-1. **Security scanner detected CVE** → Sent webhook to EDA
-2. **Event-Driven Ansible received alert** → Triggered Automation Orchestrator workflow
-3. **Automation Orchestrator queried Concert** → "Which apps are affected?"
-4. **Concert assessed impact** → Identified 1 app out of 487, risk score 95
-5. **Concert provided actionable intelligence** → Remediate immediately, Lightwell package available
+1. **Lightwell published a package** → Artifactory sent a webhook to EDA
+2. **Event-Driven Ansible received the event** → Triggered the Lightwell Proactive Update Orchestrator workflow
+3. **Automation Orchestrator queried Concert SBOM** → "Which apps are still on an older version?"
+4. **Concert answered instantly** → 12 of 537 applications, including flask-api-app
+5. **Automation Orchestrator queried Concert Arena View** → Production deployment, 1 downstream dependency
+6. **AO switch node routed to auto-update** → Production + critical severity
 
 **The Value of Concert**:
 
 * **Speed**: Instant identification of affected apps (seconds vs. hours)
-* **Accuracy**: SBOM-based correlation eliminates false positives
-* **Context**: Risk scoring considers deployment environment and exploitability
-* **Actionability**: Recommendations tied to available remediation paths
+* **Accuracy**: SBOM-based correlation, not guesswork about what's deployed
+* **Context**: Arena View shows cross-team blast radius before you change anything
+* **Scale**: One package publish resolves to a complete, ordered work queue
 
-Ready to see the automated remediation? Continue to xref:module-02-remediation.adoc[Module 2: AAP Remediation Orchestration].
+Ready to see the automated update? Continue to xref:module-02-remediation.adoc[Module 2: Orchestrate — AO Update Workflow].

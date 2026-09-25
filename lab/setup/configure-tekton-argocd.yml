@@ -1,0 +1,202 @@
+---
+# Configure Tekton pipeline and ArgoCD application for the lab
+#
+# Assumes OpenShift Pipelines (Tekton) and OpenShift GitOps (ArgoCD) operators are
+# already installed on the cluster. This playbook creates the lab-specific
+# Pipeline, EventListener/Trigger, and ArgoCD Application resources.
+
+- name: Configure Tekton and ArgoCD for Lightwell update lab
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  vars_files:
+    - vars/workshop.yml
+
+  module_defaults:
+    group/kubernetes.core.k8s:
+      host: "{{ ocp_api_url }}"
+      api_key: "{{ ocp_token }}"
+      validate_certs: false
+
+  tasks:
+    # ── Namespaces ──────────────────────────────────────────────────────
+    - name: Ensure lab namespaces exist
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: "{{ item }}"
+      loop:
+        - "{{ tekton_namespace }}"
+        - "{{ app_namespace }}"
+
+    # ── Tekton Pipeline ─────────────────────────────────────────────────
+    - name: Create Tekton Pipeline for application build
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: tekton.dev/v1
+          kind: Pipeline
+          metadata:
+            name: "{{ tekton_pipeline_name }}"
+            namespace: "{{ tekton_namespace }}"
+          spec:
+            params:
+              - name: git-url
+                type: string
+              - name: git-revision
+                type: string
+              - name: image-name
+                type: string
+            results:
+              - name: IMAGE_URL
+                value: "$(tasks.build-image.results.IMAGE_URL)"
+            workspaces:
+              - name: source
+            tasks:
+              - name: git-clone
+                taskRef:
+                  name: git-clone
+                  kind: ClusterTask
+                params:
+                  - name: url
+                    value: "$(params.git-url)"
+                  - name: revision
+                    value: "$(params.git-revision)"
+                workspaces:
+                  - name: output
+                    workspace: source
+
+              - name: run-tests
+                runAfter: [git-clone]
+                taskRef:
+                  name: pytest
+                  kind: Task
+                workspaces:
+                  - name: source
+                    workspace: source
+
+              - name: build-image
+                runAfter: [run-tests]
+                taskRef:
+                  name: buildah
+                  kind: ClusterTask
+                params:
+                  - name: IMAGE
+                    value: "$(params.image-name)"
+                workspaces:
+                  - name: source
+                    workspace: source
+
+              - name: update-gitops
+                runAfter: [build-image]
+                taskRef:
+                  name: update-gitops-manifest
+                  kind: Task
+                params:
+                  - name: gitops-repo
+                    value: "{{ gitops_repo_url }}"
+                  - name: manifest-path
+                    value: "{{ gitops_manifest_path }}"
+                  - name: new-image
+                    value: "$(tasks.build-image.results.IMAGE_URL)"
+
+    # ── Tekton Trigger ──────────────────────────────────────────────────
+    - name: Create Tekton TriggerTemplate
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: triggers.tekton.dev/v1beta1
+          kind: TriggerTemplate
+          metadata:
+            name: "{{ tekton_pipeline_name }}-template"
+            namespace: "{{ tekton_namespace }}"
+          spec:
+            params:
+              - name: git-revision
+              - name: git-url
+            resourcetemplates:
+              - apiVersion: tekton.dev/v1
+                kind: PipelineRun
+                metadata:
+                  generateName: "{{ tekton_pipeline_name }}-"
+                  labels:
+                    tekton.dev/pipeline: "{{ tekton_pipeline_name }}"
+                    lightwell/commit-sha: "$(tt.params.git-revision)"
+                spec:
+                  pipelineRef:
+                    name: "{{ tekton_pipeline_name }}"
+                  params:
+                    - name: git-url
+                      value: "$(tt.params.git-url)"
+                    - name: git-revision
+                      value: "$(tt.params.git-revision)"
+                    - name: image-name
+                      value: "{{ container_registry }}/{{ target_app }}:$(tt.params.git-revision)"
+                  workspaces:
+                    - name: source
+                      volumeClaimTemplate:
+                        spec:
+                          accessModes: [ReadWriteOnce]
+                          resources:
+                            requests:
+                              storage: 1Gi
+
+    - name: Create Tekton EventListener
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: triggers.tekton.dev/v1beta1
+          kind: EventListener
+          metadata:
+            name: "{{ tekton_pipeline_name }}-listener"
+            namespace: "{{ tekton_namespace }}"
+          spec:
+            serviceAccountName: pipeline
+            triggers:
+              - name: git-push-trigger
+                bindings:
+                  - kind: ClusterTriggerBinding
+                    ref: github-push
+                template:
+                  ref: "{{ tekton_pipeline_name }}-template"
+
+    # ── ArgoCD Application ──────────────────────────────────────────────
+    - name: Create ArgoCD Application for GitOps deployment
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: argoproj.io/v1alpha1
+          kind: Application
+          metadata:
+            name: "{{ argocd_app_name }}"
+            namespace: "{{ argocd_namespace }}"
+          spec:
+            project: default
+            source:
+              repoURL: "{{ gitops_repo_url }}"
+              targetRevision: main
+              path: "{{ gitops_manifest_path }}"
+            destination:
+              server: https://kubernetes.default.svc
+              namespace: "{{ app_namespace }}"
+            syncPolicy:
+              automated:
+                prune: true
+                selfHeal: true
+              syncOptions:
+                - CreateNamespace=true
+
+    - name: Report Tekton and ArgoCD configuration
+      ansible.builtin.debug:
+        msg: |
+          Tekton and ArgoCD configured:
+            Pipeline:       {{ tekton_pipeline_name }} (ns: {{ tekton_namespace }})
+            EventListener:  {{ tekton_pipeline_name }}-listener
+            ArgoCD App:     {{ argocd_app_name }} (ns: {{ argocd_namespace }})
+            GitOps repo:    {{ gitops_repo_url }}
+            Deploy target:  {{ app_namespace }}
+            Registry:       {{ container_registry }}/{{ target_app }}

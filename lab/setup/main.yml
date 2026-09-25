@@ -2,18 +2,18 @@
 # Concert + AAP + Lightwell Lab Setup -- Master Orchestrator
 #
 # Runs all setup playbooks in dependency order:
-#   Phase 0: Deploy Flask application and Gitea
-#   Phase 1: Configure Gitea repositories and CI/CD
+#   Phase 0: Deploy Flask application baseline
+#   Phase 1: Configure Tekton pipeline and ArgoCD application
 #   Phase 2: Configure AAP Controller resources
-#   Phase 3: Configure Concert Workflow (manual or API-driven)
+#   Phase 3: Configure Concert integration
 
 # ── Phase 0: Application Deployment ──────────────────────────────────
-- name: "Phase 0: Deploy Flask application on rhel01"
+- name: "Phase 0: Deploy Flask application baseline"
   ansible.builtin.import_playbook: deploy-flask-app.yml
 
-# ── Phase 1: Gitea Configuration ─────────────────────────────────────
-- name: "Phase 1: Configure Gitea and create repositories"
-  ansible.builtin.import_playbook: configure-gitea.yml
+# ── Phase 1: Tekton / ArgoCD Configuration ───────────────────────────
+- name: "Phase 1: Configure Tekton pipeline and ArgoCD application"
+  ansible.builtin.import_playbook: configure-tekton-argocd.yml
 
 # ── Phase 2: Automation Platform ─────────────────────────────────────
 - name: "Phase 2: Configure AAP Controller resources"
@@ -23,6 +23,6 @@
 - name: "Phase 2b: Configure EDA Controller (credential, project, activation)"
   ansible.builtin.import_playbook: configure-eda.yml
 
-# ── Phase 3: Concert Integration ────────────────────────────────────
-- name: "Phase 3: Display Concert Workflow configuration instructions"
-  ansible.builtin.import_playbook: configure-concert-workflow.yml
+# ── Phase 3: Artifactory Trigger ─────────────────────────────────────
+- name: "Phase 3: Display Artifactory webhook configuration instructions"
+  ansible.builtin.import_playbook: configure-artifactory-webhook.yml

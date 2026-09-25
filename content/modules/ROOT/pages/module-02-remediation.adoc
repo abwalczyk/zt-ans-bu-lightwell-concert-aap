@@ -1,204 +1,212 @@
-= Module 2: AAP Remediation Orchestration
+= Module 2: Orchestrate — AO Update Workflow
 
 == Module Overview
 
-In this module, you'll watch Automation Orchestrator execute the full remediation workflow: fetching the Lightwell remediated package, updating the Gitea repository, triggering the CI/CD pipeline, and validating the remediation.
+In this module, you'll watch Automation Orchestrator execute the full update workflow: committing the dependency bump to Git, monitoring the Tekton build pipeline, and watching ArgoCD deploy the result to OpenShift.
 
 **Learning Objectives:**
 
-* See how Automation Orchestrator makes remediation decisions based on Concert data
-* Understand how Lightwell provides remediated dependencies
-* Watch the automated CI/CD pipeline execute (build → test → deploy → restart)
-* Validate successful remediation
+* See how Automation Orchestrator acts on Concert's impact data
+* Watch a Tekton PipelineRun build, test, and publish a container image
+* Understand how ArgoCD GitOps delivers the change to the cluster
+* Validate the deployment against the running application
 
 **Estimated time**: 20 minutes
 
-== Automation Orchestrator Remediation Decision
+== Where the Workflow Picks Up
 
-The workflow job from Module 1 continues now with the remediation phase.
+The workflow from Module 1 continues now with the update phase. Concert has told Automation Orchestrator what is affected and what it touches; the switch node has routed `flask-api-app` to auto-update.
 
-Navigate back to **Jobs** in Automation Controller and find your running `CVE Remediation Workflow` job.
+Navigate back to **Jobs** in Automation Controller and find your running `Lightwell Proactive Update Orchestrator` workflow.
 
-Watch the next task execute:
+[NOTE]
+====
+There is no "fetch the Lightwell artifact" step in this workflow. The artifact ID, URL, and checksum arrived in the Artifactory event that started everything — the provenance travels with the trigger, so there is nothing left to look up.
+====
 
-[source,text]
-----
-TASK [Make remediation decision based on Concert assessment]
-ok: [localhost] => {
-    "decision": "PROCEED_WITH_LIGHTWELL",
-    "reason": "Concert risk score 95 >= threshold 80, Lightwell solution available"
-}
-----
+== Step 1: Update the Dependency in Git
 
-The workflow checks:
-
-* **Concert risk score >= 80?** → Yes (95)
-* **Lightwell remediated package available?** → Yes (PyYAML 6.0.2)
-* **Decision**: Proceed with automated remediation
-
-If Lightwell didn't have a solution, the workflow would:
-
-* Fall back to Concert Secure Coder for code-based remediation
-* Or escalate to manual review if no automated solution exists
-
-== Step 1: Fetch Lightwell Remediated Package
-
-Watch the workflow query Lightwell:
+The first execution node runs `lab/playbooks/aap/update-dependency-git.yml`. It clones the application repository, creates a branch, bumps the pin, and pushes.
 
 [source,text]
 ----
-TASK [Query Lightwell for remediated package]
-ok: [localhost]
+TASK [Clone application repository]
+changed: [localhost]
 
-TASK [Display Lightwell recommendation]
+TASK [Create update branch]
+changed: [localhost]
+
+TASK [Update requirements.txt with Lightwell package version]
+changed: [localhost]
+
+TASK [Commit changes]
+changed: [localhost]
+
+TASK [Push branch to origin]
+changed: [localhost]
+
+TASK [Set stats for AAP workflow]
 ok: [localhost] => {
-    "lightwell_package": {
-        "package": "PyYAML",
-        "current_version": "5.4.1",
-        "remediated_version": "6.0.2",
-        "cves_fixed": ["CVE-2026-52891"],
-        "repository": "registry.redhat.io/rhel9/lightwell",
-        "hash": "sha256:a1b2c3d4...",
-        "verified": true,
-        "released": "2026-09-15"
-    }
+    "git_branch": "lightwell-update/pyyaml-6.0.2",
+    "git_commit_sha": "a1b2c3d4e5f67890",
+    "commit_message": "Update pyyaml to Lightwell remediated version 6.0.2 (fixes CVE-2026-52891)"
 }
 ----
 
-**Red Hat Lightwell** provides:
+The change itself is a single line:
+
+[source,diff]
+----
+ flask==2.3.2
+-pyyaml==5.4.1
++pyyaml==6.0.2  # Lightwell remediated package
+ requests==2.31.0
+----
+
+**Red Hat Lightwell** is what makes that one-line change safe to automate. Lightwell provides:
 
 * **Remediated dependencies**: Packages with CVE fixes applied
-* **Verification**: Cryptographically signed packages with hash verification
+* **Verification**: Cryptographically signed packages with checksum verification
 * **Compatibility testing**: Red Hat tested to ensure no breaking changes
 * **Audit trail**: Complete provenance from source to package
 
-This is safer than blindly upgrading to the latest PyPI version, which might:
+This is safer than blindly upgrading to the latest PyPI version, which might introduce breaking API changes, pull in unvetted transitive dependencies, or lack enterprise support.
 
-* Introduce breaking API changes
-* Pull in malicious dependencies
-* Lack enterprise support and verification
+The commit SHA is captured into workflow stats — the next node needs it to find the right pipeline run.
 
-== Step 2: Update Gitea Repository
+== Step 2: Watch the Tekton Pipeline
 
-The workflow now updates the `requirements.txt` file in the Gitea repository:
+The git push fires a Tekton `EventListener`, which creates a `PipelineRun` labelled with the commit SHA.
+
+. Click the **OpenShift** tab in the workshop sidebar.
+
+. Navigate to **Pipelines** → **PipelineRuns**, and select the `ci-cd` project.
+
+. Find the run named `flask-api-app-build-*` that was just created. Click it to watch the tasks execute:
+
+**Pipeline Tasks**:
 
 [source,text]
 ----
-TASK [Update requirements.txt in Gitea repository]
-changed: [localhost]
+git-clone        ✓ Clone repository at commit a1b2c3d4
+run-tests        ✓ pytest — unit and integration tests
+build-image      ✓ buildah build with pyyaml 6.0.2
+push-image       ✓ Push quay.io/labuser/flask-api-app:a1b2c3d4
+update-gitops    ✓ Update image tag in GitOps manifest
+----
 
-TASK [Display Git commit]
+You can follow the same run from the Terminal:
+
+[source,bash]
+----
+tkn pipelinerun logs --last -f -n ci-cd
+----
+
+Note the final task. Tekton does **not** deploy the application. It builds, tests, publishes an image, and then updates a manifest in the GitOps repository. Delivery is ArgoCD's job — which keeps the cluster's desired state in Git rather than in a pipeline script.
+
+== Step 3: Automation Orchestrator Monitors the PipelineRun
+
+Switch back to Automation Controller. The `Lightwell - Monitor Tekton Pipeline` node runs `lab/playbooks/aap/monitor-tekton-pipeline.yml` and polls the PipelineRun to completion:
+
+[source,text]
+----
+TASK [Find PipelineRun for this commit]
+ok: [localhost] => (attempt 2/12)
+
+TASK [Wait for PipelineRun to complete]
+ok: [localhost] => (attempt 9/60)
+
+TASK [Assert pipeline succeeded]
 ok: [localhost] => {
-    "git_commit": {
-        "repo": "flask-api-app",
-        "branch": "main",
-        "commit_sha": "a1b2c3d4e5f6",
-        "message": "fix: upgrade PyYAML 5.4.1 → 6.0.2 (CVE-2026-52891)\n\nRemediates CVE-2026-52891 (CVSS 9.8)\nLightwell package: PyYAML 6.0.2\nConcert risk score: 95\n\nCo-Authored-By: Automation Orchestrator"
-    }
+    "msg": "Tekton PipelineRun flask-api-app-build-xk29f succeeded"
+}
+
+TASK [Display pipeline results]
+ok: [localhost] => {
+    "tekton_pipelinerun": "flask-api-app-build-xk29f",
+    "tekton_status": "success",
+    "container_image": "quay.io/labuser/flask-api-app:a1b2c3d4"
 }
 ----
 
-The workflow used Gitea's API to:
+The playbook matches the PipelineRun by the `lightwell/commit-sha` label, so it tracks exactly the run its own commit produced — not whichever run happened to start most recently.
 
-1. Clone the repository
-2. Update `requirements.txt`: `PyYAML==5.4.1` → `PyYAML==6.0.2`
-3. Commit the change with detailed audit information
-4. Push to the main branch
+If the pipeline fails, the assertion fails, the workflow stops, and no deployment occurs. Tests are a gate, not a formality.
 
-== Step 3: Watch Gitea CI/CD Pipeline
+== Step 4: Watch ArgoCD Deploy
 
-The git push triggers the Gitea Actions CI/CD pipeline automatically.
+Tekton's final task committed a new image tag to the GitOps repository. ArgoCD notices within seconds.
 
-. Click the **Gitea** tab in the workshop sidebar (route host `gitea` from `config/instances.yaml`).
+. In the **OpenShift** tab, open the **ArgoCD** console (or the *Cluster Argo CD* link from the GitOps operator).
 
-. Log in with:
+. Find the `flask-api-app` Application and watch it sync:
+
+[source,text]
+----
+Application: flask-api-app
+Sync Status:   OutOfSync → Syncing → Synced
+Health Status: Progressing → Healthy
+Revision:      b7e4f21 (gitops repo)
+
+Resources:
+  Deployment/flask-api-app   Synced   Healthy
+  Service/flask-api-app      Synced   Healthy
+  Route/flask-api-app        Synced   Healthy
+----
+
+Because the Application has `syncPolicy.automated` enabled, no one clicked anything. ArgoCD detected drift between Git and the cluster and closed the gap.
+
+. Watch the rolling update from the Terminal:
 +
-* Username: `labuser`
-* Password: `ansible123!`
-+
-(If prompted for the admin account instead, use `gitea` / `ansible123!`.)
+[source,bash]
+----
+oc rollout status deployment/flask-api-app -n production
+----
 
-. Navigate to **Repositories > flask-api-app > Actions**.
+The Deployment rolls 3 replicas one at a time. At no point are all pods down.
 
-You should see a new workflow run that was triggered by the commit. Click on it to watch the pipeline execute:
+== Step 5: Validate the Deployment
 
-**Pipeline Stages**:
+The `Lightwell - Validate Deployment` node runs `lab/playbooks/validation/validate-deployment.yml`, which checks the change from four angles:
 
 [source,text]
 ----
-Stage 1: Build
-  ✓ Install dependencies from requirements.txt
-  ✓ Verify PyYAML 6.0.2 installed
+TASK [Wait for ArgoCD Application to be Synced and Healthy]
+ok: [localhost]
 
-Stage 2: Test
-  ✓ Run unit tests
-  ✓ Run integration tests
-  ✓ Security scan (verify CVE-2026-52891 no longer detected)
-
-Stage 3: Deploy
-  ✓ Copy new code to /opt/flask-app/
-  ✓ Install updated dependencies
-
-Stage 4: Restart
-  ✓ Restart flask-app.service
-  ✓ Health check (wait for app to respond)
-----
-
-This entire pipeline runs automatically. No human intervention required.
-
-== Step 4: Monitor Automation Orchestrator Job
-
-Switch back to Automation Controller to watch the workflow monitor the pipeline:
-
-[source,text]
-----
-TASK [Wait for Gitea pipeline to complete]
-ok: [localhost] => (attempt 1/30)
-...
-ok: [localhost] => (attempt 8/30)
-
-TASK [Display pipeline result]
+TASK [Verify all replicas are ready]
 ok: [localhost] => {
-    "pipeline_status": "success",
-    "duration": "2m 15s",
-    "stages_passed": 4,
-    "stages_failed": 0
+    "msg": "All 3 replicas ready"
+}
+
+TASK [Verify application reports the Lightwell package version]
+ok: [localhost] => {
+    "msg": "Application reports pyyaml 6.0.2"
+}
+
+TASK [Display validation results]
+ok: [localhost] => {
+    "msg": [
+        "Lightwell update validated ✓",
+        "Package: pyyaml 6.0.2",
+        "ArgoCD Sync: Synced",
+        "ArgoCD Health: Healthy",
+        "Running Image: quay.io/labuser/flask-api-app:a1b2c3d4",
+        "Replicas Ready: 3/3",
+        "Application Health: ok",
+        "YAML Parsing: Functional"
+    ]
 }
 ----
 
-The workflow polls the Gitea API every 5 seconds to monitor the pipeline status. Once it completes successfully, the workflow continues.
+You can verify this yourself:
 
-== Step 5: Validate Remediation
-
-The final workflow task validates that the remediation was successful:
-
-[source,text]
-----
-TASK [Validate remediation - check PyYAML version]
-ok: [rhel01]
-
-TASK [Display validation result]
-ok: [localhost] => {
-    "validation": {
-        "host": "rhel01",
-        "app": "flask-api",
-        "previous_version": "5.4.1",
-        "current_version": "6.0.2",
-        "cve_status": "RESOLVED",
-        "app_status": "healthy",
-        "response_time_ms": 45
-    }
-}
-----
-
-You can also verify this yourself:
-
-. Click the **Flask App** tab and open `/version`, **or**
+. Click the **Flask App** tab and open `/health`, **or**
 . Open the **Terminal** tab and run:
 
 [source,bash]
 ----
-curl http://rhel01/version
+curl -s https://$(oc get route flask-api-app -n production -o jsonpath='{.spec.host}')/health
 ----
 
 Expected output:
@@ -206,92 +214,140 @@ Expected output:
 ----
 {
   "app": "flask-api",
+  "status": "ok",
   "pyyaml_version": "6.0.2"
 }
 ----
 
-The CVE is now remediated!
+Confirm the running image matches what Tekton built:
 
-== Step 6: Understanding the Complete Workflow
+[source,bash]
+----
+oc get deployment flask-api-app -n production \
+  -o jsonpath='{.spec.template.spec.containers[0].image}'
+----
+
+The update is live.
+
+== Step 6: Update Concert Inventory
+
+The final node runs `lab/playbooks/concert/update-inventory.yml`, closing the loop back to the system that started it:
+
+[source,text]
+----
+PATCH /api/v1/inventory/applications/flask-api-app/sbom
+{
+  "package": "pyyaml",
+  "previous_version": "5.4.1",
+  "new_version": "6.0.2",
+  "update_timestamp": "2026-09-25T14:23:45Z",
+  "validation_passed": true,
+  "deployment_method": "tekton-argocd",
+  "container_image": "quay.io/labuser/flask-api-app:a1b2c3d4"
+}
+----
+
+Concert's portfolio view now shows 11 applications on an older PyYAML instead of 12. The next query reflects reality.
+
+== Step 7: Understanding the Complete Workflow
 
 Let's review what Automation Orchestrator did:
 
 [source,text]
 ----
-1. EDA Trigger
-   └─> Received CVE alert from scanner
-   └─> Triggered Automation Orchestrator workflow
+1. Artifactory Event
+   └─> Lightwell published pyyaml 6.0.2
+   └─> EDA rulebook triggered AO workflow
 
-2. Concert Assessment (Module 1)
-   └─> Queried Concert: "Which apps are affected?"
-   └─> Concert identified: flask-api on rhel01
-   └─> Concert risk score: 95 (Critical)
+2. Concert Impact Analysis (Module 1)
+   └─> SBOM query: 12 of 537 apps on older version
+   └─> Arena View: production deployment, 1 downstream dependency
 
-3. Remediation Decision (Module 2)
-   └─> Risk score >= 80? Yes → Proceed
-   └─> Lightwell solution available? Yes → Use Lightwell
+3. AO Routing Decision (Module 1)
+   └─> Production + critical severity → auto-update
 
-4. Fetch Lightwell Package
-   └─> Query Lightwell API
-   └─> Get remediated PyYAML 6.0.2
-   └─> Verify package hash
+4. Update Source Control
+   └─> Branch lightwell-update/pyyaml-6.0.2
+   └─> requirements.txt: pyyaml 5.4.1 → 6.0.2
+   └─> Commit and push
 
-5. Update Source Control
-   └─> Update Gitea requirements.txt
-   └─> Commit with audit trail
-   └─> Push to main branch
+5. Tekton PipelineRun
+   └─> git-clone → run-tests → build-image
+   └─> push-image → quay.io/labuser/flask-api-app:a1b2c3d4
+   └─> update-gitops manifest
 
-6. Automated CI/CD
-   └─> Gitea Actions triggered
-   └─> Build → Test → Deploy → Restart
-   └─> All stages passed
+6. ArgoCD GitOps Sync
+   └─> Detected manifest drift
+   └─> Rolling update, 3 replicas
+   └─> Synced / Healthy
 
-7. Validate Remediation
-   └─> Check deployed version
-   └─> Confirm app health
-   └─> CVE status: RESOLVED
+7. Validate Deployment
+   └─> ArgoCD sync and health
+   └─> 3/3 pods ready, image matches
+   └─> /health reports pyyaml 6.0.2
+
+8. Update Concert Inventory
+   └─> SBOM patched, portfolio drift 12 → 11
 ----
 
-**Total time from CVE alert to remediated application**: ~3 minutes
+**Total time from package publish to validated deployment**: ~3 minutes
 
 **Without automation**:
-* Security team triages alert: 2-4 hours
-* Development team updates code: 1-2 days
+
+* Someone notices the new package: days to weeks
+* Development team updates the pin: 1-2 days
 * QA testing: 1-2 days
 * Change approval process: 1-3 days
 * Deployment scheduling: 1-5 days
-* **Total**: 5-14 days
+* **Total**: 5-14 days — per application, times 12
 
-== Alternative Path: Concert Secure Coder
+== Why Tekton and ArgoCD
 
-In this lab, Lightwell had a remediated package available. But what if it didn't?
+The CI/CD split in this lab is deliberate, and it changes what the automation can promise.
 
-Automation Orchestrator would use **Concert Secure Coder** instead:
+**Tekton owns build-time**: cloning, testing, building, and publishing an immutable, digest-addressable image. It runs on the cluster, as pods, with no external runners to maintain.
 
-1. **Query Concert Secure Coder API**: "How do I fix CVE-2026-52891?"
-2. **Concert analyzes the code**: Identifies the vulnerable deserialization call
-3. **Concert generates remediation**:
-   - Code changes to use safe PyYAML API
-   - Or refactor to avoid vulnerable code path
-4. **Create Pull Request**: Automation Orchestrator creates PR with Concert's suggested changes
-5. **Human Review**: Developer reviews Concert's code suggestions
-6. **Merge and Deploy**: Once approved, same CI/CD pipeline executes
+**ArgoCD owns run-time**: the cluster's desired state lives in Git. That yields three things a push-based pipeline cannot easily offer:
 
-This gives you **two remediation paths**:
+* **Drift detection** — if someone edits the Deployment by hand, ArgoCD reports it and (with `selfHeal`) reverts it
+* **Rollback as a first-class operation** — `argocd app rollback` returns to any prior synced revision
+* **A single source of truth** — the answer to "what should be running?" is a Git commit, not a pipeline log
 
-* **Lightwell**: Fully automated, zero code changes (preferred)
-* **Secure Coder**: Semi-automated, code changes reviewed by humans (fallback)
+[TIP]
+====
+Try a rollback to see this. From the Terminal:
+[source,bash]
+----
+argocd app history flask-api-app
+argocd app rollback flask-api-app <previous-revision>
+----
+The cluster returns to PyYAML 5.4.1 in seconds — and ArgoCD will report the Application as `OutOfSync` against Git until you either re-sync or revert the commit.
+====
+
+== Alternative Path: Approval Gates
+
+In this lab, the switch node routed straight to auto-update because the target had a production deployment and the package was marked critical.
+
+Had Concert's Arena View reported downstream dependencies owned by another team without a critical severity to justify the risk, AO would have taken a different branch:
+
+1. **Create an approval request** — AAP workflow approval node, or a ticket in an external system
+2. **Notify the owning teams** — `platform-team` for the app, `network-team` for `api-gateway`
+3. **Wait for human sign-off** — the workflow pauses, holding all its Concert context
+4. **Resume on approval** — the same Tekton and ArgoCD path executes unchanged
+
+This gives you **graduated autonomy**: fully automated where the risk profile allows it, human-gated where it doesn't, with identical delivery machinery behind both.
 
 == Module Summary
 
 You've completed Module 2! Here's what happened:
 
-1. **Automation Orchestrator made remediation decision** → Based on Concert risk score
-2. **Fetched Lightwell remediated package** → PyYAML 6.0.2, verified and tested
-3. **Updated Gitea repository** → Changed requirements.txt with audit trail
-4. **Gitea CI/CD pipeline auto-triggered** → Build → Test → Deploy → Restart
-5. **Validated remediation** → Confirmed PyYAML 6.0.2 deployed, app healthy
+1. **Updated the application repository** → Branch, commit, push with the Lightwell version
+2. **Tekton PipelineRun executed** → Clone, test, build, push image, update GitOps manifest
+3. **AO monitored the pipeline** → Matched by commit SHA label, asserted success
+4. **ArgoCD auto-synced** → Rolling update across 3 replicas, Synced and Healthy
+5. **Validated the deployment** → ArgoCD state, pod readiness, image, and `/health` all confirmed
+6. **Updated Concert inventory** → Portfolio drift went from 12 applications to 11
 
-**Total remediation time**: ~3 minutes from CVE alert to resolution.
+**Total update time**: ~3 minutes from package publish to validated deployment.
 
-Ready to review the complete audit trail? Continue to xref:module-03-audit-trail.adoc[Module 3: Audit Trail].
+Ready to review the complete audit trail? Continue to xref:module-03-audit-trail.adoc[Module 3: Validate — Audit Trail].

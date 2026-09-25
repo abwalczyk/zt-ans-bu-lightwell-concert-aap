@@ -1,31 +1,34 @@
-= Concert + AAP + Lightwell CVE Remediation Lab
+= Concert + AAP + Lightwell Proactive Dependency Update Lab
 
 == Lab Overview
 
-Welcome to the Concert + AAP + Lightwell CVE Remediation Lab. In this hands-on workshop, you'll learn how to automate enterprise-scale CVE remediation using IBM Concert for vulnerability intelligence, Ansible Automation Platform for orchestration, and Red Hat Lightwell for trusted remediated packages.
+Welcome to the Concert + AAP + Lightwell Proactive Dependency Update Lab. In this hands-on workshop, you'll learn how to automate enterprise-scale dependency updates the moment a trusted fix becomes available — using Red Hat Lightwell as the source of remediated packages, IBM Concert for portfolio-wide SBOM intelligence, Ansible Automation Platform for orchestration, and Tekton and ArgoCD for cloud-native delivery on OpenShift.
 
 == What You'll Learn
 
+* How Event-Driven Ansible reacts to a new Lightwell package landing in Artifactory
 * How Concert identifies affected applications from enterprise-wide SBOM inventory
-* How Concert assesses CVE impact and provides risk intelligence
-* How Automation Orchestrator orchestrates remediation workflows
-* How Lightwell provides verified, remediated packages
-* How to validate successful remediation with complete audit trails
+* How Concert's Arena View topology exposes cross-team deployment impact
+* How Automation Orchestrator orchestrates the update workflow and routing decisions
+* How Tekton builds and ArgoCD deploys the change with a complete audit trail
 
 == Lab Scenario
 
-A critical vulnerability (CVE-2026-52891) has been discovered in PyYAML - a Python package used across your application portfolio. Your security scanner has detected this vulnerability and needs immediate remediation.
+Red Hat Lightwell has just published a remediated build of PyYAML — version 6.0.2, which fixes CVE-2026-52891 — into your Artifactory `lightwell-remediated` repository.
 
-**Without Concert**: You'd manually scan 500+ applications to find which ones are affected. This takes hours or days.
+This is the key shift in this lab: you are not reacting to a vulnerability being *found*. You are reacting to a trusted fix becoming *available*.
 
-**With Concert**: Concert's pre-indexed SBOM inventory instantly identifies affected applications. Concert provides risk assessment and priority scoring. Automation Orchestrator executes the remediation automatically.
+**Without Concert**: You'd manually scan 500+ applications to work out which ones are still pinned to an older PyYAML. This takes hours or days, and by then the next package has landed.
+
+**With Concert**: Concert's pre-indexed SBOM inventory instantly identifies the 12 applications (out of 537) still on an older version. Automation Orchestrator decides which ones to update now, and Tekton and ArgoCD deliver the change.
 
 == Lab Environment
 
 * **control**: Ansible Automation Platform with Automation Orchestrator and Event-Driven Ansible
-* **rhel01**: Flask application server (vulnerable PyYAML 5.4.1 → remediated 6.0.2)
-* **gitea**: Git repository + CI/CD pipeline
-* **Concert**: IBM Concert instance (intelligence source, cloud-hosted)
+* **OpenShift**: Tekton pipelines (`ci-cd` namespace) and ArgoCD (`openshift-gitops` namespace)
+* **flask-api-app**: Target application, 3 replicas in the `production` namespace (PyYAML 5.4.1 → 6.0.2)
+* **Artifactory**: Package store hosting the `lightwell-remediated` repository (event source)
+* **Concert**: IBM Concert instance (SBOM inventory and topology, cloud-hosted)
 * **Lightwell**: Red Hat Lightwell service (remediated packages)
 
 == How to use this guide
@@ -41,20 +44,20 @@ The workshop sidebar tabs map directly to the infrastructure in `config/instance
 | Automation Controller login (`admin` / `ansible123!`), jobs, EDA activations
 
 | **Flask App**
-| `https://app-{guid}.{domain}/`
-| Vulnerable Flask API on `rhel01` (check `/version`)
+| `https://flask-api-app-{guid}.{domain}/`
+| Target application route on OpenShift (check `/health`)
 
-| **Gitea**
-| `https://gitea-{guid}.{domain}/`
-| Repository, commits, and Actions pipeline (`labuser` / `ansible123!`)
+| **OpenShift**
+| Cluster console
+| Tekton PipelineRuns, ArgoCD Applications, pods in the `production` namespace
 
 | **Concert**
 | Shared Concert UI
-| Optional: browse Concert while workflows run
+| Optional: browse Concert SBOM inventory and Arena View while workflows run
 
 | **Terminal**
 | SSH to `control`
-| Run `curl` and other CLI commands against lab hosts
+| Run `curl`, `oc`, and `argocd` commands against lab systems
 |===
 
 When a step says "click the **Flask App** tab" or "open the **Terminal** tab", use the sidebar — do not invent hostnames or ports.
@@ -63,24 +66,24 @@ When a step says "click the **Flask App** tab" or "open the **Terminal** tab", u
 
 This lab consists of 3 modules:
 
-=== xref:module-01-concert-assessment.adoc[Module 1: Concert Vulnerability Assessment]
+=== xref:module-01-concert-assessment.adoc[Module 1: Detect — Package Publish & Concert Impact Analysis]
 
-Trigger a CVE alert and watch Concert identify affected applications and assess impact.
+Publish a Lightwell package to Artifactory and watch Concert identify every affected application across the portfolio.
 
 **Estimated time**: 15 minutes
 
-=== xref:module-02-remediation.adoc[Module 2: AAP Remediation Orchestration]
+=== xref:module-02-remediation.adoc[Module 2: Orchestrate — AO Update Workflow]
 
-Execute automated remediation using Automation Orchestrator, Lightwell, and Gitea CI/CD.
+Execute the automated update using Automation Orchestrator, Tekton pipelines, and ArgoCD GitOps deployment.
 
 **Estimated time**: 20 minutes
 
-=== xref:module-03-audit-trail.adoc[Module 3: Audit Trail]
+=== xref:module-03-audit-trail.adoc[Module 3: Validate — Audit Trail]
 
-Review the complete audit trail across Concert, Automation Orchestrator, Gitea, and the application.
+Review the complete audit trail across Artifactory, EDA, Automation Orchestrator, Concert, Tekton, ArgoCD, and the running application.
 
 **Estimated time**: 10 minutes
 
 == Let's Get Started
 
-Click **Next** to begin Module 1: Concert Vulnerability Assessment.
+Click **Next** to begin Module 1: Detect — Package Publish & Concert Impact Analysis.

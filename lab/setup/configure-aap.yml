@@ -32,13 +32,24 @@
           become_username: root
         state: present
 
+    - name: Create OpenShift credential for Tekton and ArgoCD access
+      ansible.controller.credential:
+        name: "{{ workshop_ocp_credential_name }}"
+        organization: "{{ workshop_org }}"
+        credential_type: "OpenShift or Kubernetes API Bearer Token"
+        inputs:
+          host: "{{ ocp_api_url }}"
+          bearer_token: "{{ ocp_token }}"
+          verify_ssl: false
+        state: present
+
     # ── Project ────────────────────────────────────────────────────────
-    - name: Create Concert CVE lab project
+    - name: Create Lightwell proactive update lab project
       ansible.controller.project:
         name: "{{ workshop_project_name }}"
         organization: "{{ workshop_org }}"
         scm_type: git
-        scm_url: "{{ gitea_url }}/{{ gitea_repo }}.git"
+        scm_url: "{{ eda_scm_url }}"
         scm_update_on_launch: false
         state: present
       register: _project
@@ -56,10 +67,12 @@
         organization: "{{ workshop_org }}"
         variables:
           ansible_become: true
-          target_cve: "{{ target_cve }}"
-          vulnerable_package: "{{ vulnerable_package }}"
-          vulnerable_version: "{{ vulnerable_version }}"
-          fixed_version: "{{ fixed_version }}"
+          lightwell_package: "{{ lightwell_package }}"
+          current_version: "{{ current_version }}"
+          lightwell_version: "{{ lightwell_version }}"
+          tekton_namespace: "{{ tekton_namespace }}"
+          argocd_namespace: "{{ argocd_namespace }}"
+          app_namespace: "{{ app_namespace }}"
         state: present
 
     - name: Add appservers group
@@ -94,13 +107,14 @@
         job_type: run
         inventory: "{{ workshop_inventory_name }}"
         project: "{{ workshop_project_name }}"
-        playbook: lab/playbooks/concert/query-sbom-inventory.yml
+        playbook: lab/playbooks/concert/query-sbom-by-package.yml
         credentials:
           - "{{ workshop_credential_name }}"
         execution_environment: "{{ workshop_ee_name }}"
         ask_variables_on_launch: true
         extra_vars:
-          cve_id: "{{ target_cve }}"
+          package_name: "{{ lightwell_package }}"
+          package_version: "{{ lightwell_version }}"
           target_app: "{{ target_app }}"
         state: present
 
@@ -120,56 +134,63 @@
           application: "{{ target_app }}"
         state: present
 
-    # ── Job Templates - Remediation Execution ──────────────────────────
-    - name: Create job template - Fetch Lightwell Artifact
+    # ── Job Templates - Update Execution ───────────────────────────────
+    - name: Create job template - Update Dependency in Git
       ansible.controller.job_template:
-        name: "Concert - Fetch Lightwell Artifact"
+        name: "Lightwell - Update Dependency in Git"
         organization: "{{ workshop_org }}"
         job_type: run
         inventory: "{{ workshop_inventory_name }}"
         project: "{{ workshop_project_name }}"
-        playbook: lab/playbooks/aap/fetch-lightwell-artifact.yml
+        playbook: lab/playbooks/aap/update-dependency-git.yml
         credentials:
           - "{{ workshop_credential_name }}"
         execution_environment: "{{ workshop_ee_name }}"
         ask_variables_on_launch: true
         extra_vars:
-          cve_id: "{{ target_cve }}"
-          package_name: "{{ vulnerable_package }}"
+          package_name: "{{ lightwell_package }}"
+          package_version: "{{ lightwell_version }}"
+          app_repo_url: "{{ app_repo_url }}"
         state: present
 
-    - name: Create job template - Update Dependency in Gitea
+    - name: Create job template - Monitor Tekton Pipeline
       ansible.controller.job_template:
-        name: "Concert - Update Dependency in Gitea"
+        name: "Lightwell - Monitor Tekton Pipeline"
         organization: "{{ workshop_org }}"
         job_type: run
         inventory: "{{ workshop_inventory_name }}"
         project: "{{ workshop_project_name }}"
-        playbook: lab/playbooks/aap/update-dependency-gitea.yml
+        playbook: lab/playbooks/aap/monitor-tekton-pipeline.yml
         credentials:
           - "{{ workshop_credential_name }}"
+          - "{{ workshop_ocp_credential_name }}"
         execution_environment: "{{ workshop_ee_name }}"
         ask_variables_on_launch: true
         extra_vars:
-          cve_id: "{{ target_cve }}"
-          fixed_version: "{{ fixed_version }}"
+          tekton_namespace: "{{ tekton_namespace }}"
+          pipeline_name: "{{ tekton_pipeline_name }}"
         state: present
 
-    - name: Create job template - Validate Remediation
+    - name: Create job template - Validate Deployment
       ansible.controller.job_template:
-        name: "Concert - Validate Remediation"
+        name: "Lightwell - Validate Deployment"
         organization: "{{ workshop_org }}"
         job_type: run
         inventory: "{{ workshop_inventory_name }}"
         project: "{{ workshop_project_name }}"
-        playbook: lab/playbooks/validation/validate-remediation.yml
+        playbook: lab/playbooks/validation/validate-deployment.yml
         credentials:
           - "{{ workshop_credential_name }}"
+          - "{{ workshop_ocp_credential_name }}"
         execution_environment: "{{ workshop_ee_name }}"
         ask_variables_on_launch: true
         extra_vars:
-          cve_id: "{{ target_cve }}"
-          expected_version: "{{ fixed_version }}"
+          package_name: "{{ lightwell_package }}"
+          package_version: "{{ lightwell_version }}"
+          app_name: "{{ argocd_app_name }}"
+          app_namespace: "{{ app_namespace }}"
+          argocd_namespace: "{{ argocd_namespace }}"
+          app_route: "{{ app_route }}"
         state: present
 
     # ── Job Templates - Concert Inventory Update ───────────────────────
@@ -187,29 +208,31 @@
         ask_variables_on_launch: true
         extra_vars:
           application: "{{ target_app }}"
-          package: "{{ vulnerable_package }}"
-          previous_version: "{{ vulnerable_version }}"
-          new_version: "{{ fixed_version }}"
+          package: "{{ lightwell_package }}"
+          previous_version: "{{ current_version }}"
+          new_version: "{{ lightwell_version }}"
         state: present
 
     # ── Automation Orchestrator Workflow ───────────────────────────────
-    # Note: This workflow is triggered by EDA (Event-Driven Ansible)
-    # Concert provides SBOM inventory and topology data, AO orchestrates remediation
-    - name: Create Concert CVE Remediation workflow
+    # Note: This workflow is triggered by EDA when Artifactory publishes a new
+    # Lightwell remediated package. Concert provides SBOM inventory and topology
+    # data, AO orchestrates the update through Tekton and ArgoCD.
+    - name: Create Lightwell Proactive Update workflow
       ansible.controller.workflow_job_template:
-        name: "CVE Remediation Orchestrator"
+        name: "Lightwell Proactive Update Orchestrator"
         organization: "{{ workshop_org }}"
         inventory: "{{ workshop_inventory_name }}"
         ask_variables_on_launch: true
         extra_vars:
-          cve_id: "{{ target_cve }}"
+          package_name: "{{ lightwell_package }}"
+          package_version: "{{ lightwell_version }}"
         state: present
       register: _workflow
 
     # Phase 1: Concert Inventory & Topology Queries
     - name: Add workflow node - Concert SBOM Inventory
       ansible.controller.workflow_job_template_node:
-        workflow_job_template: "CVE Remediation Orchestrator"
+        workflow_job_template: "Lightwell Proactive Update Orchestrator"
         identifier: concert_sbom
         unified_job_template: "Concert - Query SBOM Inventory"
         state: present
@@ -217,41 +240,41 @@
 
     - name: Add workflow node - Concert Arena View Topology
       ansible.controller.workflow_job_template_node:
-        workflow_job_template: "CVE Remediation Orchestrator"
+        workflow_job_template: "Lightwell Proactive Update Orchestrator"
         identifier: concert_topology
         unified_job_template: "Concert - Query Topology"
         state: present
       register: _node_topology
 
-    # Phase 2: Remediation Execution
-    - name: Add workflow node - Fetch Lightwell Artifact
+    # Phase 2: Update Execution
+    - name: Add workflow node - Update Dependency in Git
       ansible.controller.workflow_job_template_node:
-        workflow_job_template: "CVE Remediation Orchestrator"
-        identifier: fetch_lightwell
-        unified_job_template: "Concert - Fetch Lightwell Artifact"
-        state: present
-      register: _node_fetch
-
-    - name: Add workflow node - Update Dependency
-      ansible.controller.workflow_job_template_node:
-        workflow_job_template: "CVE Remediation Orchestrator"
+        workflow_job_template: "Lightwell Proactive Update Orchestrator"
         identifier: update_dependency
-        unified_job_template: "Concert - Update Dependency in Gitea"
+        unified_job_template: "Lightwell - Update Dependency in Git"
         state: present
       register: _node_update
 
-    - name: Add workflow node - Validate Remediation
+    - name: Add workflow node - Monitor Tekton Pipeline
       ansible.controller.workflow_job_template_node:
-        workflow_job_template: "CVE Remediation Orchestrator"
-        identifier: validate_remediation
-        unified_job_template: "Concert - Validate Remediation"
+        workflow_job_template: "Lightwell Proactive Update Orchestrator"
+        identifier: monitor_tekton
+        unified_job_template: "Lightwell - Monitor Tekton Pipeline"
+        state: present
+      register: _node_tekton
+
+    - name: Add workflow node - Validate Deployment
+      ansible.controller.workflow_job_template_node:
+        workflow_job_template: "Lightwell Proactive Update Orchestrator"
+        identifier: validate_deployment
+        unified_job_template: "Lightwell - Validate Deployment"
         state: present
       register: _node_validate
 
     # Phase 3: Concert Inventory Update
     - name: Add workflow node - Update Concert Inventory
       ansible.controller.workflow_job_template_node:
-        workflow_job_template: "CVE Remediation Orchestrator"
+        workflow_job_template: "Lightwell Proactive Update Orchestrator"
         identifier: update_concert
         unified_job_template: "Concert - Update Inventory"
         state: present
@@ -260,50 +283,52 @@
     # Workflow Links
     - name: Link SBOM → Topology
       ansible.controller.workflow_job_template_node:
-        workflow_job_template: "CVE Remediation Orchestrator"
+        workflow_job_template: "Lightwell Proactive Update Orchestrator"
         identifier: concert_topology
         success_nodes:
           - concert_sbom
         state: present
 
-    - name: Link Topology → Fetch Lightwell
+    - name: Link Topology → Update Dependency
       ansible.controller.workflow_job_template_node:
-        workflow_job_template: "CVE Remediation Orchestrator"
-        identifier: fetch_lightwell
+        workflow_job_template: "Lightwell Proactive Update Orchestrator"
+        identifier: update_dependency
         success_nodes:
           - concert_topology
         state: present
 
-    - name: Link Fetch → Update Dependency
+    - name: Link Update Dependency → Monitor Tekton
       ansible.controller.workflow_job_template_node:
-        workflow_job_template: "CVE Remediation Orchestrator"
-        identifier: update_dependency
-        success_nodes:
-          - fetch_lightwell
-        state: present
-
-    - name: Link Update → Validate
-      ansible.controller.workflow_job_template_node:
-        workflow_job_template: "CVE Remediation Orchestrator"
-        identifier: validate_remediation
+        workflow_job_template: "Lightwell Proactive Update Orchestrator"
+        identifier: monitor_tekton
         success_nodes:
           - update_dependency
         state: present
 
+    - name: Link Monitor Tekton → Validate Deployment
+      ansible.controller.workflow_job_template_node:
+        workflow_job_template: "Lightwell Proactive Update Orchestrator"
+        identifier: validate_deployment
+        success_nodes:
+          - monitor_tekton
+        state: present
+
     - name: Link Validate → Update Concert Status
       ansible.controller.workflow_job_template_node:
-        workflow_job_template: "CVE Remediation Orchestrator"
+        workflow_job_template: "Lightwell Proactive Update Orchestrator"
         identifier: update_concert
         success_nodes:
-          - validate_remediation
+          - validate_deployment
         state: present
 
     - name: Display workflow information
       ansible.builtin.debug:
         msg:
-          - "CVE Remediation Orchestrator workflow created"
+          - "Lightwell Proactive Update Orchestrator workflow created"
           - "Workflow ID: {{ _workflow.id }}"
           - "Workflow URL: {{ aap_host }}/#/templates/workflow_job_template/{{ _workflow.id }}"
-          - "Triggered by: EDA rulebook (lab/extensions/eda/cve-alert.yml)"
+          - "Triggered by: EDA rulebook (lab/extensions/eda/lightwell-package-alert.yml)"
           - "Concert role: SBOM inventory database + dependency topology mapping"
-          - "AO role: Orchestration, decision logic, remediation execution"
+          - "AO role: Orchestration, decision logic, update execution"
+          - "Tekton role: Build, test, image push, GitOps manifest update"
+          - "ArgoCD role: GitOps deployment to OpenShift"

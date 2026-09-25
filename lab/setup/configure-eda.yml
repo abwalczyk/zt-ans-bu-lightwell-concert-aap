@@ -10,8 +10,8 @@
   vars:
     eda_api: "{{ eda_host }}/api/eda/v1"
     eda_controller_cred_name: "Concert Controller Token"
-    eda_activation_name: "cve-scanner-webhook"
-    eda_rulebook_filename: "cve-alert.yml"
+    eda_activation_name: "artifactory-lightwell-webhook"
+    eda_rulebook_filename: "lightwell-package-alert.yml"
     # Public workshop repo so EDA can sync rulebooks under extensions/eda/rulebooks/
     eda_project_url: "{{ eda_scm_url | default('https://github.com/abwalczyk/zt-ans-bu-lightwell-concert-aap.git') }}"
 
@@ -124,7 +124,7 @@
         body_format: json
         body:
           name: "{{ workshop_project_name }}"
-          description: "Concert CVE lab rulebooks"
+          description: "Lightwell proactive update lab rulebooks"
           organization_id: "{{ eda_org_id | int }}"
           url: "{{ eda_project_url }}"
         status_code: [201]
@@ -226,7 +226,7 @@
         force_basic_auth: true
       register: _existing_activation
 
-    - name: Create cve-scanner-webhook activation
+    - name: Create artifactory-lightwell-webhook activation
       ansible.builtin.uri:
         url: "{{ eda_api }}/activations/"
         method: POST
@@ -237,7 +237,7 @@
         body_format: json
         body:
           name: "{{ eda_activation_name }}"
-          description: "Receives CVE alerts from security scanners"
+          description: "Receives new Lightwell package events from Artifactory"
           organization_id: "{{ eda_org_id | int }}"
           project_id: "{{ eda_project_id | int }}"
           rulebook_id: "{{ eda_rulebook_id | int }}"

@@ -1,4 +1,4 @@
 * xref:index.adoc[Lab Home]
-* xref:module-01-concert-assessment.adoc[Module 1: Concert Vulnerability Assessment]
-* xref:module-02-remediation.adoc[Module 2: AAP Remediation Orchestration]
-* xref:module-03-audit-trail.adoc[Module 3: Audit Trail]
+* xref:module-01-concert-assessment.adoc[Module 1: Detect — Package Publish & Concert Impact Analysis]
+* xref:module-02-remediation.adoc[Module 2: Orchestrate — AO Update Workflow]
+* xref:module-03-audit-trail.adoc[Module 3: Validate — Audit Trail]

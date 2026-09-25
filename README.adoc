@@ -1,10 +1,14 @@
-= Concert + AAP + Lightwell CVE Remediation Lab
+= Concert + AAP + Lightwell Proactive Dependency Update Lab
 :toc: auto
 
-A hands-on workshop demonstrating enterprise-scale, event-driven CVE remediation using
-Event-Driven Ansible to ingest CVE alerts, Automation Orchestrator to orchestrate the
-response, IBM Concert to provide enterprise-wide SBOM inventory and dependency topology,
-Red Hat Lightwell for remediated dependencies, and Gitea CI/CD for automated deployment.
+A hands-on workshop demonstrating enterprise-scale, event-driven dependency updates using
+Event-Driven Ansible to ingest Artifactory package events, Automation Orchestrator to
+orchestrate the response, IBM Concert to provide enterprise-wide SBOM inventory and
+dependency topology, Red Hat Lightwell for remediated dependencies, and Tekton and ArgoCD
+for cloud-native build and GitOps delivery on OpenShift.
+
+The trigger is proactive rather than reactive: the workflow starts when a trusted *fix*
+becomes available, not when a vulnerability is discovered.
 
 == Workshop Modules
 
@@ -12,38 +16,44 @@ Red Hat Lightwell for remediated dependencies, and Gitea CI/CD for automated dep
 |===
 | Module | Focus | Hands-on exercises
 
-| *TRIAGE -- CVE Detection & Concert Inventory*
-| Event-Driven Ansible receives CVE-2026-52891 alert (PyYAML deserialization) and triggers
-Automation Orchestrator. Concert's pre-indexed SBOM inventory instantly identifies 12 affected applications
-(including flask-api-app). Arena View topology shows deployment environments and downstream dependencies.
-AO switch node routes to auto-remediation based on production deployment status.
-| Trigger CVE webhook; observe EDA rulebook activation; review Concert SBOM inventory (enterprise-wide);
-examine Concert Arena View topology; watch AO switch node decision.
+| *DETECT -- Package Publish & Concert Impact Analysis*
+| Red Hat Lightwell publishes a remediated PyYAML 6.0.2 build (fixing CVE-2026-52891) to
+Artifactory. Event-Driven Ansible receives the webhook and triggers Automation Orchestrator.
+Concert's pre-indexed SBOM inventory instantly identifies 12 affected applications out of 537
+(including flask-api-app). Arena View topology shows deployment environments and downstream
+dependencies. AO switch node routes to auto-update based on production deployment and severity.
+| Publish package / simulate Artifactory webhook; observe EDA rulebook activation; review
+Concert SBOM inventory by package (enterprise-wide); examine Concert Arena View topology;
+watch AO switch node decision.
 
-| *ORCHESTRATE -- Automation Orchestrator Remediation*
-| Automation Orchestrator orchestrates the remediation: fetch Lightwell artifact, update dependencies
-in Gitea, monitor CI/CD pipeline, validate remediation, and update Concert status.
-| Execute Automation Orchestrator workflow; observe Lightwell integration; monitor Gitea pipeline;
-review job execution history; examine audit trail.
+| *ORCHESTRATE -- Automation Orchestrator Update Workflow*
+| Automation Orchestrator orchestrates the update: commit the dependency bump to Git, monitor
+the Tekton PipelineRun (test, build, push image, update GitOps manifest), watch ArgoCD auto-sync
+the rolling deployment, validate the result, and update Concert's SBOM.
+| Execute Automation Orchestrator workflow; watch Tekton PipelineRun; observe ArgoCD sync and
+rolling update; review job execution history; validate the running application.
 
 | *VALIDATE -- Audit Trail Review*
-| Review complete audit trail: EDA webhook receipt, Automation Orchestrator execution history,
-Concert API queries and status updates, Gitea commits and pipeline logs, application health checks.
-| Review Automation Orchestrator execution history; examine Concert CVE dashboard (status: RESOLVED);
-generate compliance report with complete audit trail.
+| Review complete audit trail: Artifactory artifact provenance, EDA event receipt, Automation
+Orchestrator execution history, Concert API queries and SBOM updates, Git commits, Tekton
+pipeline logs and image provenance, ArgoCD sync history, application health checks.
+| Review Automation Orchestrator execution history; examine Concert inventory (12 → 11 affected
+apps); inspect ArgoCD rollback targets; generate compliance report with complete audit trail.
 |===
 
 == Architecture
 
 [cols="1,2"]
 |===
-| Host | Role
+| Component | Role
 
-| `control`     | AAP Controller 2.7+ with Automation Orchestrator and EDA
-| `rhel01`      | Flask application server (vulnerable, then remediated)
-| `gitea`       | Gitea server container with Gitea Actions runner
-| `Concert`     | IBM Concert instance (intelligence source, shared, cloud-hosted)
-| `Lightwell`   | Red Hat Lightwell service (shared)
+| `control`       | AAP Controller 2.7+ with Automation Orchestrator and EDA
+| `OpenShift`     | Tekton pipelines (`ci-cd`) and ArgoCD (`openshift-gitops`)
+| `flask-api-app` | Target application, 3 replicas in the `production` namespace
+| `Artifactory`   | Package store hosting `lightwell-remediated` (event source)
+| `Quay`          | Container registry for images built by Tekton
+| `Concert`       | IBM Concert instance (SBOM inventory and topology, shared, cloud-hosted)
+| `Lightwell`     | Red Hat Lightwell service (remediated packages, shared)
 |===
 
 == Repository Structure
@@ -64,28 +74,37 @@ zt-ans-bu-lightwell-concert-aap/
 │       ├── images/                  # Screenshots and diagrams
 │       ├── partials/                # Reusable content snippets
 │       └── nav.adoc                 # Navigation structure
+├── extensions/
+│   └── eda/rulebooks/               # EDA project sync location
+│       └── lightwell-package-alert.yml
 ├── setup-automation/
 │   ├── main.yml                     # Lab environment setup orchestration
 │   ├── ansible.cfg
 │   └── tasks/
 │       ├── common-bootstrap.yml     # SSH, networking, RHSM
 │       ├── setup-rhel01.yml         # Deploy Flask packages on rhel01
-│       ├── configure-rhel01.yml     # Start Flask on port 80
+│       ├── configure-rhel01.yml     # Start baseline Flask app
 │       └── configure-control.yml    # AAP wait + configure playbooks
 ├── lab/                             # Workshop content
 │   ├── playbooks/
 │   │   ├── concert/                 # Concert API query playbooks
-│   │   │   ├── query-sbom-inventory.yml
+│   │   │   ├── query-sbom-by-package.yml
 │   │   │   ├── query-topology.yml
 │   │   │   └── update-inventory.yml
-│   │   ├── aap/                     # AAP remediation playbooks
-│   │   ├── validation/              # Validation and testing playbooks
+│   │   ├── aap/                     # Update execution playbooks
+│   │   │   ├── update-dependency-git.yml
+│   │   │   └── monitor-tekton-pipeline.yml
+│   │   ├── validation/
+│   │   │   └── validate-deployment.yml
 │   │   └── tasks/                   # Reusable tasks
 │   ├── extensions/
-│   │   └── eda/                     # Event-Driven Ansible rulebooks
-│   │       └── cve-alert.yml        # CVE webhook ingestion
+│   │   └── eda/                     # Event-Driven Ansible rulebooks (lab copy)
+│   │       └── lightwell-package-alert.yml
 │   ├── setup/                       # Lab configuration playbooks
 │   │   ├── configure-aap.yml
+│   │   ├── configure-eda.yml
+│   │   ├── configure-tekton-argocd.yml
+│   │   ├── configure-artifactory-webhook.yml
 │   │   ├── deploy-flask-app.yml
 │   │   └── vars/workshop.yml
 │   ├── inventory/
@@ -99,8 +118,8 @@ zt-ans-bu-lightwell-concert-aap/
 │   └── content/                     # Embedded lab guide
 │       └── modules/ROOT/pages/
 ├── runtime-automation/              # Per-module runtime automation
-│   ├── module-01/                   # Concert CVE detection
-│   ├── module-02/                   # AAP orchestration
+│   ├── module-01/                   # Package detection and Concert analysis
+│   ├── module-02/                   # AO orchestration via Tekton/ArgoCD
 │   └── module-03/                   # Validation and reporting
 ├── site.yml                         # Showroom site configuration
 ├── ui-config.yml                    # Showroom UI configuration
@@ -109,50 +128,55 @@ zt-ans-bu-lightwell-concert-aap/
 
 == Setup
 
-The automated setup provisions infrastructure and configures Concert Workflow, AAP job
-templates, and the vulnerable Flask application. Students will execute the remediation
-workflow and observe the CVE lifecycle.
+The automated setup provisions infrastructure and configures the Tekton pipeline, ArgoCD
+application, AAP job templates, and the target Flask application. Students will trigger the
+update workflow and observe the full delivery lifecycle.
 
 === What the setup creates
 
-* Flask application with PyYAML 5.4.1 (vulnerable to CVE-2026-52891)
-* Gitea server with application repository and CI/CD pipeline
-* EDA rulebook for CVE webhook ingestion
+* Flask application deployed to OpenShift with PyYAML 5.4.1 (3 replicas, `production` namespace)
+* Tekton Pipeline, TriggerTemplate, and EventListener in the `ci-cd` namespace
+* ArgoCD Application with automated sync policy watching the GitOps repository
+* EDA rulebook and activation for Artifactory package webhook ingestion
 * Automation Orchestrator workflow with Concert inventory/topology query nodes
-* AAP job templates for Concert SBOM queries, topology queries, and remediation
+* AAP job templates for Concert queries, Git update, Tekton monitoring, and validation
 * Concert SBOM inventory pre-populated with application data
 
 === What attendees execute
 
-* Trigger CVE alert via EDA webhook
+* Publish a Lightwell package to Artifactory (or simulate the webhook)
 * Observe EDA rulebook activation and Automation Orchestrator trigger
-* Review Concert SBOM inventory results (12 affected apps from portfolio)
-* Review Concert Arena View topology (deployments, dependencies)
+* Review Concert SBOM inventory results (12 affected apps from a 537-app portfolio)
+* Review Concert Arena View topology (deployments, cross-team dependencies)
 * Monitor Automation Orchestrator workflow execution (decision logic, routing)
-* Watch Gitea CI/CD pipeline build and deploy
-* Review complete audit trail (EDA → AO → Concert → Gitea → App)
+* Watch the Tekton PipelineRun build, test, and publish the image
+* Watch ArgoCD auto-sync the rolling deployment
+* Review complete audit trail (Artifactory → EDA → AO → Concert → Tekton → ArgoCD → App)
 
 == Prerequisites
 
+* OpenShift cluster with OpenShift Pipelines (Tekton) and OpenShift GitOps (ArgoCD) operators
 * OpenShift Virtualization cluster with RHDP provisioner
 * AAP 2.7+ controller (shared or per-lab)
 * IBM Concert instance (shared, cloud-hosted)
 * Red Hat Lightwell access
+* Artifactory instance with a `lightwell-remediated` repository and webhook support
+* Container registry credentials (Quay)
 * RHEL 9.x base image
 
 == Lab Flow
 
-1. **EDA Alert Ingestion**: CVE-2026-52891 alert received via webhook
-2. **EDA Trigger**: EDA rulebook triggers Automation Orchestrator workflow
-3. **Concert SBOM Inventory Query**: AO queries Concert's pre-indexed database → 12 affected apps (including flask-api-app)
-4. **Concert Topology Query**: AO queries Arena View → production deployment, 1 downstream dependency
-5. **AO Routing Decision**: Switch node evaluates (production deployment + CVSS 9.8 = auto-remediate)
-6. **Lightwell Artifact**: AO job template fetches Lightwell-remediated PyYAML 6.0.2
-7. **Gitea Update**: AO job template updates requirements.txt, commits, pushes to Gitea
-8. **Gitea CI/CD**: Pipeline builds with PyYAML 6.0.2, runs tests, deploys application
-9. **AO Validation**: Job template verifies dependency version, tests application health
+1. **Artifactory Package Publish**: Lightwell publishes remediated PyYAML 6.0.2 to `lightwell-remediated`
+2. **EDA Trigger**: EDA rulebook receives the webhook and triggers the Automation Orchestrator workflow
+3. **Concert SBOM Inventory Query**: AO queries Concert by package → 12 affected apps out of 537 (including flask-api-app)
+4. **Concert Topology Query**: AO queries Arena View → production deployment (3 replicas), 1 downstream dependency
+5. **AO Routing Decision**: Switch node evaluates (production deployment + critical severity = auto-update)
+6. **Git Update**: AO job template updates requirements.txt on branch `lightwell-update/pyyaml-6.0.2`, commits, pushes
+7. **Tekton PipelineRun**: Clone → test → build image → push to Quay → update GitOps manifest
+8. **ArgoCD Sync**: ArgoCD detects the manifest change and rolls out the new image across 3 replicas
+9. **AO Validation**: Job template verifies ArgoCD sync/health, pod readiness, and application health endpoint
 10. **Concert Inventory Update**: AO job template updates Concert SBOM (pyyaml: 5.4.1 → 6.0.2)
-11. **Audit Trail**: Complete workflow history across EDA, AO, Concert, Gitea, application
+11. **Audit Trail**: Complete workflow history across Artifactory, EDA, AO, Concert, Git, Tekton, ArgoCD, application
 
 == License
 

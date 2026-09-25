@@ -1,38 +1,43 @@
 ---
-# Query Concert SBOM Inventory
-# Finds which applications are affected by a given CVE across entire portfolio
+# Query Concert SBOM Inventory by Package
+# Finds which applications still run an older version of a package that Lightwell
+# has just published a remediated build for.
 #
 # Concert's Unique Value:
 #   - Pre-indexed SBOM database (instant query vs. scanning 500+ repos)
 #   - Enterprise-wide view (all apps, all teams)
 #
 # Required extra vars:
-#   cve_id: CVE identifier (e.g., CVE-2026-52891)
+#   package_name: Package published by Lightwell (e.g., pyyaml)
+#   package_version: New remediated version (e.g., 6.0.2)
 #
 # Returns (via set_stats):
-#   concert_total_affected: Total number of affected applications in portfolio
-#   concert_affected_apps: List of affected applications
-#   concert_target_app_found: Boolean (whether target app is in affected list)
-#   concert_package: Package name
+#   concert_total_affected: Total number of applications on an older version
+#   concert_affected_apps: List of those applications
+#   concert_target_app_found: Boolean (whether target app is in the list)
 #   concert_current_version: Current package version in target app
 
-- name: Query Concert SBOM Inventory
+- name: Query Concert SBOM Inventory by package
   hosts: localhost
   gather_facts: false
   vars:
     concert_url: "{{ lookup('env', 'CONCERT_URL') | default('https://concert.example.com') }}"
     concert_api_key: "{{ lookup('env', 'CONCERT_API_KEY') }}"
-    cve_id: "{{ cve_id }}"
+    package_name: "{{ package_name }}"
+    package_version: "{{ package_version }}"
     target_app: "{{ target_app | default('flask-api-app') }}"
 
   tasks:
-    - name: Query Concert inventory for CVE-affected applications
+    - name: Query Concert inventory for applications using this package
       ansible.builtin.uri:
-        url: "{{ concert_url }}/api/v1/inventory/vulnerabilities/{{ cve_id }}"
+        url: "{{ concert_url }}/api/v1/inventory/packages/{{ package_name }}/applications"
         method: GET
         headers:
           Authorization: "Bearer {{ concert_api_key }}"
           Content-Type: "application/json"
+        body_format: json
+        body:
+          older_than: "{{ package_version }}"
         validate_certs: false
         status_code: 200
       register: concert_inventory_response
@@ -51,9 +56,10 @@
           concert_total_affected: "{{ inventory_data.total_affected_applications | default(0) }}"
           concert_affected_apps: "{{ inventory_data.affected_applications | default([]) }}"
           concert_target_app_found: "{{ target_app_data != {} }}"
-          concert_package: "{{ target_app_data.package | default('') }}"
+          concert_package: "{{ package_name }}"
           concert_current_version: "{{ target_app_data.current_version | default('') }}"
           concert_owner_team: "{{ target_app_data.owner_team | default('') }}"
+          concert_repository: "{{ target_app_data.repository | default('') }}"
 
     - name: Display Concert SBOM inventory results
       ansible.builtin.debug:
@@ -61,17 +67,16 @@
           ==========================================
           Concert SBOM Inventory Results
           ==========================================
-          CVE ID: {{ cve_id }}
+          New Lightwell Package: {{ package_name }} {{ package_version }}
 
           PORTFOLIO-WIDE IMPACT:
-          Total Affected Applications: {{ inventory_data.total_affected_applications | default(0) }}
+          Applications on an older version: {{ inventory_data.total_affected_applications | default(0) }}
           (Concert scanned {{ inventory_data.total_applications | default('N/A') }} apps)
 
           TARGET APPLICATION:
           Name: {{ target_app }}
           Found in affected list: {{ 'YES' if target_app_data != {} else 'NO' }}
           {% if target_app_data != {} %}
-          Package: {{ target_app_data.package }}
           Current Version: {{ target_app_data.current_version }}
           Owner Team: {{ target_app_data.owner_team }}
           Repository: {{ target_app_data.repository }}
@@ -80,7 +85,7 @@
           OTHER AFFECTED APPS:
           {% for app in inventory_data.affected_applications | default([]) %}
           {% if app.name != target_app %}
-          - {{ app.name }} ({{ app.package }} {{ app.current_version }})
+          - {{ app.name }} ({{ package_name }} {{ app.current_version }})
           {% endif %}
           {% endfor %}
           ==========================================

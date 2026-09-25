@@ -1,0 +1,78 @@
+---
+# Configure the Artifactory webhook that triggers the lab
+#
+# Artifactory fires this webhook when Lightwell publishes a remediated package.
+# That event is the entry point for the entire workflow: EDA receives it and
+# launches the AO orchestrator.
+
+- name: Configure Artifactory webhook for Lightwell package events
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  vars_files:
+    - vars/workshop.yml
+
+  vars:
+    eda_webhook_endpoint: "http://{{ control_host }}:{{ eda_webhook_port }}/webhook"
+
+  tasks:
+    - name: Display Artifactory webhook configuration
+      ansible.builtin.debug:
+        msg:
+          - "═══════════════════════════════════════════════════════════════"
+          - "Artifactory Webhook Configuration"
+          - "═══════════════════════════════════════════════════════════════"
+          - ""
+          - "Artifactory must notify EDA when Lightwell publishes a package."
+          - ""
+          - "Repository:  {{ artifactory_lightwell_repo }}"
+          - "Event:       artifact.deployed"
+          - "Target URL:  {{ eda_webhook_endpoint }}"
+          - "Method:      POST"
+          - ""
+          - "Expected payload shape:"
+          - "  {"
+          - "    \"package_name\": \"{{ lightwell_package }}\","
+          - "    \"package_version\": \"{{ lightwell_version }}\","
+          - "    \"artifact_id\": \"{{ lightwell_package }}-{{ lightwell_version }}.rhlw-00456\","
+          - "    \"repository\": \"{{ artifactory_lightwell_repo }}\","
+          - "    \"artifact_url\": \"<artifactory download url>\","
+          - "    \"checksum\": \"sha256:...\","
+          - "    \"remediation_info\": {"
+          - "      \"fixes_cve\": [\"{{ fixes_cve }}\"],"
+          - "      \"severity\": \"critical\""
+          - "    }"
+          - "  }"
+          - ""
+          - "The EDA rulebook matching this event is:"
+          - "  extensions/eda/rulebooks/lightwell-package-alert.yml"
+          - ""
+          - "To simulate the event without publishing to Artifactory:"
+          - "  curl -X POST {{ eda_webhook_endpoint }} \\"
+          - "    -H 'Content-Type: application/json' \\"
+          - "    -d @lab/samples/lightwell-package-event.json"
+          - ""
+          - "═══════════════════════════════════════════════════════════════"
+
+    - name: Check if Concert API credentials are available
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: Concert API credentials not configured. Set CONCERT_API_URL
+          and CONCERT_API_TOKEN environment variables before running the lab.
+      when: concert_api_url == "" or concert_api_token == ""
+
+    - name: Check if Artifactory credentials are available
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: Artifactory credentials not configured. Set ARTIFACTORY_URL
+          and ARTIFACTORY_TOKEN to publish packages from the lab.
+      when: artifactory_url == "" or artifactory_token == ""
+
+    - name: Display integration endpoints
+      ansible.builtin.debug:
+        msg:
+          - "Concert API URL:  {{ concert_api_url | default('not configured', true) }}"
+          - "Artifactory URL:  {{ artifactory_url | default('not configured', true) }}"
+          - "EDA webhook:      {{ eda_webhook_endpoint }}"
+          - "OCP API:          {{ ocp_api_url | default('not configured', true) }}"

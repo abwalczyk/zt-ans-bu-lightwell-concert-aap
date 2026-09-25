@@ -1,0 +1,76 @@
+---
+# Update Application Dependency in Git
+# Clones the application repository, bumps the dependency to the Lightwell
+# remediated version, commits and pushes. The push triggers a Tekton PipelineRun.
+
+- name: Update dependency to Lightwell remediated version
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    package_name: "{{ package_name | default('pyyaml') }}"
+    package_version: "{{ package_version | default('6.0.2') }}"
+    fixes_cve: "{{ fixes_cve | default([]) }}"
+    app_repo_url: "{{ app_repo_url | default('https://github.com/labuser/flask-api-app') }}"
+    app_repo_path: "/tmp/flask-api-app-{{ package_name }}-{{ package_version }}"
+    branch_name: "lightwell-update/{{ package_name }}-{{ package_version }}"
+    commit_message: >-
+      Update {{ package_name }} to Lightwell remediated version {{ package_version }}
+      {%- if fixes_cve | length > 0 %} (fixes {{ fixes_cve | join(', ') }}){% endif %}
+
+  tasks:
+    - name: Clone application repository
+      ansible.builtin.git:
+        repo: "{{ app_repo_url }}.git"
+        dest: "{{ app_repo_path }}"
+        version: main
+        force: true
+
+    - name: Create update branch
+      ansible.builtin.command:
+        cmd: git checkout -b {{ branch_name }}
+        chdir: "{{ app_repo_path }}"
+      register: branch_create
+      changed_when: branch_create.rc == 0
+      failed_when: false
+
+    - name: Update requirements.txt with Lightwell package version
+      ansible.builtin.lineinfile:
+        path: "{{ app_repo_path }}/requirements.txt"
+        regexp: '^(?i){{ package_name }}=='
+        line: "{{ package_name }}=={{ package_version }}  # Lightwell remediated package"
+        state: present
+
+    - name: Commit changes
+      ansible.builtin.command:
+        cmd: git commit -am "{{ commit_message }}"
+        chdir: "{{ app_repo_path }}"
+      environment:
+        GIT_AUTHOR_NAME: "Lightwell Automation"
+        GIT_AUTHOR_EMAIL: "automation@lightwell.local"
+        GIT_COMMITTER_NAME: "Lightwell Automation"
+        GIT_COMMITTER_EMAIL: "automation@lightwell.local"
+      register: git_commit
+      changed_when: git_commit.rc == 0
+
+    - name: Capture commit SHA
+      ansible.builtin.command:
+        cmd: git rev-parse HEAD
+        chdir: "{{ app_repo_path }}"
+      register: commit_sha
+      changed_when: false
+
+    - name: Push branch to origin
+      ansible.builtin.command:
+        cmd: git push origin {{ branch_name }}
+        chdir: "{{ app_repo_path }}"
+      register: git_push
+      changed_when: git_push.rc == 0
+
+    - name: Set stats for AAP workflow
+      ansible.builtin.set_stats:
+        data:
+          git_branch: "{{ branch_name }}"
+          git_repo: "{{ app_repo_url }}"
+          git_commit_sha: "{{ commit_sha.stdout }}"
+          commit_message: "{{ commit_message }}"
