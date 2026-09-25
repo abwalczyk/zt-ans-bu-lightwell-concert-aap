@@ -24,6 +24,7 @@ jobs:
       - name: checkout
         uses: actions/checkout@v7
       - name: configure pages
+        id: pages
         uses: actions/configure-pages@v6
         with:
           enablement: true
@@ -33,12 +34,16 @@ jobs:
           node-version: 20.13.1
       - name: install antora
         run: npm install --global @antora/cli@3.1 @antora/site-generator@3.1
+      # site.yml hardcodes a rhpds.github.io URL, which would emit absolute
+      # links pointing at the wrong org. --url overrides it with whatever Pages
+      # actually serves this repo at, so the workflow stays fork-agnostic.
       - name: antora generate
-        run: antora generate site.yml --stacktrace
+        run: antora generate site.yml --url "${{ steps.pages.outputs.base_url }}" --stacktrace
+      # Must match output.dir in site.yml (./www) -- not www/www.
       - name: upload pages artifact
         uses: actions/upload-pages-artifact@v5
         with:
-          path: www/www
+          path: www
 
   deploy:
     needs: build

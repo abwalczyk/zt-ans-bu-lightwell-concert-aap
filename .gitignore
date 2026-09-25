@@ -2,6 +2,7 @@
 .cache/
 build/
 public/
+www/
 
 # Ansible
 *.retry
