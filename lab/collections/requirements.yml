@@ -1,6 +1,7 @@
 ---
 # ansible.controller is pre-installed on AAP nodes, no need to install it
 collections:
+  - name: ansible.controller
   - name: ansible.posix
     version: ">=1.5.0"
   - name: community.general
