@@ -15,6 +15,11 @@
 #   concert_has_prod_deployment: Boolean (whether app is deployed to production)
 #   concert_downstream_dependencies: List of apps that depend on this one
 #   concert_dependency_count: Number of downstream dependencies
+#   governance_route: One of auto_patch_approved, manual_patching_required,
+#     application_patched, fallback. This is the artifact the AO switch reads,
+#     in the same role SBOM/VEX correlation's governance_route plays in the
+#     Lightwell remediation flow. The classification uses Concert inventory
+#     and topology instead of a TPA SBOM/VEX lookup.
 
 - name: Query Concert Arena View Topology
   hosts: localhost
@@ -25,9 +30,9 @@
     concert_instance_id: "{{ concert_instance_id | default('0000-0000-0000-0000', true) }}"
     application: "{{ application | default('flask-api-app') }}"
     demo_mode: "{{ lab_demo_mode | default(true) | bool }}"
-    # Drives the AO routing decision. 0 downstream consumers -> the impact agent
-    # picks auto_update and the workflow runs straight through to the audit
-    # summary. Set to 1 or more to demo the human approval branch instead.
+    # 0 downstream consumers -> governance_route auto_patch_approved (the
+    # workflow runs straight through to the audit summary). Set to 1 or more
+    # to demo the manual_patching_required approval branch instead.
     demo_downstream_count: "{{ demo_downstream | default(0) | int }}"
 
   tasks:
@@ -40,14 +45,37 @@
           InstanceId: "{{ concert_instance_id }}"
           Content-Type: "application/json"
         validate_certs: false
-        status_code: 200
+        # 404 is "this application is not in Concert", not a transport failure.
+        status_code: [200, 404]
       register: concert_topology_response
       when: not demo_mode
 
-    - name: Parse Concert topology response
+    - name: Record an empty topology when Concert has no such application
       ansible.builtin.set_fact:
-        topology_data: "{{ concert_topology_response.json }}"
-      when: not demo_mode
+        topology_data:
+          application: "{{ application }}"
+          repository: ""
+          build_artifacts: []
+          deployments: []
+          downstream_dependencies: []
+      when:
+        - not demo_mode
+        - concert_topology_response.status | int == 404
+
+    - name: Normalize the live Concert topology
+      ansible.builtin.set_fact:
+        topology_data:
+          application: "{{ application }}"
+          repository: "{{ repo }}"
+          build_artifacts: "{{ concert_topology_response.json.build_artifacts | default([]) }}"
+          deployments: "{{ concert_topology_response.json.deployments | default([]) }}"
+          downstream_dependencies: "{{ concert_topology_response.json.downstream_dependencies | default([]) }}"
+      vars:
+        repos: "{{ concert_topology_response.json.source_repos | default([]) }}"
+        repo: "{{ (repos | first).repo_url | default('') if (repos | length > 0) else '' }}"
+      when:
+        - not demo_mode
+        - concert_topology_response.status | int == 200
 
     - name: Build representative Concert topology (demo mode)
       ansible.builtin.set_fact:
@@ -73,13 +101,71 @@
         msg: >-
           DEMO MODE: Concert Arena View was not queried. Topology is
           representative lab data ({{ demo_downstream_count }} downstream
-          consumer(s), so AO will route to
-          {{ 'approval_required' if demo_downstream_count | int > 0 else 'auto_update' }}).
+          consumer(s)). governance_route is published below for the AO switch.
       when: demo_mode
 
     - name: Check for production deployment
       ansible.builtin.set_fact:
-        has_prod: "{{ topology_data.deployments | selectattr('environment', 'equalto', 'production') | list | length > 0 }}"
+        has_prod: "{{ topology_data.deployments | default([]) | selectattr('environment', 'defined') | selectattr('environment', 'equalto', 'production') | list | length > 0 }}"
+        route_dependency_count: "{{ topology_data.downstream_dependencies | default([]) | length }}"
+
+    # Same four route names as the Lightwell remediation flow's governance
+    # switch. An explicit override (the remediation flow's demo hook) wins.
+    # Otherwise the route is classified from Concert: nothing affected is a
+    # fallback, an already-deployed event closes the loop, downstream
+    # consumers need a person, and a production critical/high fix is the
+    # auto-patch path. Anything still affected but not auto-approved is
+    # manual patching — there is no separate "schedule" route.
+    - name: Normalize Concert facts used to classify the governance route
+      ansible.builtin.set_fact:
+        route_override: "{{ governance_route | default('') | string }}"
+        route_target_found: >-
+          {{ (concert_target_app_found | default('true') | string | lower)
+             not in ['false', 'no', '0'] }}
+        route_affected_count: >-
+          {{ 1 if (concert_total_affected | default('') | string | trim) == ''
+             else (concert_total_affected | string | trim | int) }}
+        route_severity: "{{ severity | default('critical') | string | lower }}"
+        route_deployed: "{{ deployment_status | default('') | string == 'deployed' }}"
+
+    - name: Use an explicit governance route override when it is one of the four routes
+      ansible.builtin.set_fact:
+        derived_governance_route: "{{ route_override }}"
+      when: route_override in ['auto_patch_approved', 'manual_patching_required', 'application_patched', 'fallback']
+
+    - name: Route an already-deployed publication to application_patched
+      ansible.builtin.set_fact:
+        derived_governance_route: application_patched
+      when:
+        - derived_governance_route is not defined
+        - route_deployed | bool
+
+    - name: Route a portfolio that does not need this fix to fallback
+      ansible.builtin.set_fact:
+        derived_governance_route: fallback
+      when:
+        - derived_governance_route is not defined
+        - (not (route_target_found | bool)) or (route_affected_count | int == 0)
+
+    - name: Route downstream consumers to manual patching
+      ansible.builtin.set_fact:
+        derived_governance_route: manual_patching_required
+      when:
+        - derived_governance_route is not defined
+        - route_dependency_count | int > 0
+
+    - name: Route a production high-severity fix to auto patch
+      ansible.builtin.set_fact:
+        derived_governance_route: auto_patch_approved
+      when:
+        - derived_governance_route is not defined
+        - has_prod | bool
+        - route_severity in ['critical', 'high']
+
+    - name: Default a still-affected application to manual patching
+      ansible.builtin.set_fact:
+        derived_governance_route: manual_patching_required
+      when: derived_governance_route is not defined
 
     - name: Set workflow stats for topology
       ansible.builtin.set_stats:
@@ -88,8 +174,9 @@
           concert_deployment_count: "{{ topology_data.deployments | default([]) | length }}"
           concert_has_prod_deployment: "{{ has_prod }}"
           concert_downstream_dependencies: "{{ topology_data.downstream_dependencies | default([]) }}"
-          concert_dependency_count: "{{ topology_data.downstream_dependencies | default([]) | length }}"
+          concert_dependency_count: "{{ route_dependency_count }}"
           concert_repository: "{{ topology_data.repository | default('') }}"
+          governance_route: "{{ derived_governance_route }}"
 
     - name: Display Concert topology results
       ansible.builtin.debug:
@@ -102,16 +189,18 @@
 
           BUILD ARTIFACTS:
           {% for artifact in topology_data.build_artifacts | default([]) %}
-          - Type: {{ artifact.type }}, Image: {{ artifact.image | default('N/A') }}
+          - Type: {{ artifact.type | default('unknown') }}, Image: {{ artifact.image | default(artifact.name | default('N/A')) }}
           {% endfor %}
 
           DEPLOYMENTS:
           Total Deployments: {{ topology_data.deployments | default([]) | length }}
           {% for deploy in topology_data.deployments | default([]) %}
-          - Environment: {{ deploy.environment }}
+          - Environment: {{ deploy.environment | default('unknown') }}
             Namespace: {{ deploy.namespace | default('N/A') }}
             Replicas: {{ deploy.replicas | default('N/A') }}
           {% endfor %}
+
+          GOVERNANCE ROUTE: {{ derived_governance_route }}
 
           DOWNSTREAM DEPENDENCIES:
           Total Dependencies: {{ topology_data.downstream_dependencies | default([]) | length }}

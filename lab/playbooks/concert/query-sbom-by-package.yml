@@ -50,9 +50,36 @@
       register: concert_inventory_response
       when: not demo_mode
 
-    - name: Parse Concert inventory response
+    # Live Concert returns {"pagination", "applications": [{name, version, ...}]}.
+    # It does not return the demo document's affected_applications list, and
+    # an application version is not a package version. Only records that
+    # actually carry a package_version are counted as still affected.
+    - name: Normalize each Concert application
       ansible.builtin.set_fact:
-        inventory_data: "{{ concert_inventory_response.json }}"
+        concert_applications: "{{ concert_applications | default([]) + [record] }}"
+      vars:
+        record:
+          name: "{{ item.name | default('') }}"
+          current_version: "{{ item.current_version | default(item.version | default('')) }}"
+          repository: "{{ item.repository | default(item.repo_url | default('')) }}"
+          owner_team: "{{ item.owner_team | default('') }}"
+          package_version: "{{ item.package_version | default('') }}"
+      loop: "{{ concert_inventory_response.json.applications | default(concert_inventory_response.json.affected_applications | default([])) }}"
+      loop_control:
+        label: "{{ item.name | default('application') }}"
+      when: not demo_mode
+
+    - name: Shape the inventory the rest of the playbook reads
+      ansible.builtin.set_fact:
+        inventory_data:
+          package_name: "{{ package_name }}"
+          total_applications: "{{ concert_applications | default([]) | length }}"
+          total_affected_applications: "{{ affected | length }}"
+          affected_applications: "{{ affected }}"
+          applications: "{{ concert_applications | default([]) }}"
+      vars:
+        known: "{{ concert_applications | default([]) | rejectattr('package_version', 'equalto', '') | list }}"
+        affected: "{{ known | rejectattr('package_version', 'equalto', package_version) | list }}"
       when: not demo_mode
 
     # ── Demo path ──────────────────────────────────────────────────────
@@ -87,9 +114,14 @@
           lab's SBOM is loaded into Concert.
       when: demo_mode
 
-    - name: Find target application in affected list
+    - name: Find the target application in the Concert inventory
       ansible.builtin.set_fact:
-        target_app_data: "{{ inventory_data.affected_applications | selectattr('name', 'equalto', target_app) | first | default({}) }}"
+        target_app_data: "{{ matches | first | default({}) }}"
+      vars:
+        pool: "{{ inventory_data.applications | default(inventory_data.affected_applications | default([])) }}"
+        exact: "{{ pool | selectattr('name', 'equalto', target_app) | list }}"
+        partial: "{{ pool | selectattr('name', 'search', target_app) | list }}"
+        matches: "{{ exact if (exact | length > 0) else partial }}"
 
     - name: Set workflow stats for SBOM inventory
       ansible.builtin.set_stats:
