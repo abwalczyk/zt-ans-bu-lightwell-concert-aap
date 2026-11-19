@@ -1,0 +1,65 @@
+---
+# One application. Concert stores a library version on the build-artifact
+# instance, not on the application object: topology names the library, and
+# /build_artifacts/<id>/instances carries library_version.
+- name: Read this application's Concert topology
+  ansible.builtin.uri:
+    url: "{{ concert_url }}/applications/{{ app.name }}/topology"
+    method: GET
+    headers:
+      Authorization: "C_API_KEY {{ concert_api_key }}"
+      InstanceId: "{{ concert_instance_id }}"
+      Content-Type: "application/json"
+    validate_certs: false
+    status_code: [200, 404]
+  register: app_topology
+
+- name: Clear the library match from the previous application
+  ansible.builtin.set_fact:
+    libraries: []
+    package_hit: {}
+
+- name: List library artifacts on that topology
+  ansible.builtin.set_fact:
+    libraries: "{{ app_topology.json.build_artifacts | default([]) | selectattr('type', 'equalto', 'library') | list }}"
+  when: app_topology.status | int == 200
+
+- name: Read library instances from that topology
+  ansible.builtin.uri:
+    url: "{{ concert_url }}/build_artifacts/{{ item.id }}/instances"
+    method: GET
+    headers:
+      Authorization: "C_API_KEY {{ concert_api_key }}"
+      InstanceId: "{{ concert_instance_id }}"
+      Content-Type: "application/json"
+    validate_certs: false
+    status_code: 200
+  loop: "{{ libraries | default([]) }}"
+  loop_control:
+    label: "{{ item.name | default('library') }}"
+  register: library_pages
+  when: libraries | default([]) | length > 0
+
+- name: Keep the instance of the package this publication replaces
+  ansible.builtin.set_fact:
+    package_hit: "{{ matches | first | default({}) }}"
+  vars:
+    pages: "{{ library_pages.results | default([]) | selectattr('json', 'defined') | map(attribute='json') | list }}"
+    instances: "{{ pages | map(attribute='instances') | flatten }}"
+    named: "{{ instances | selectattr('build_artifact_name', 'equalto', package_name) | list }}"
+    by_path: "{{ instances | selectattr('name', 'search', '/' + package_name + '$') | list }}"
+    candidates: "{{ named if (named | length > 0) else by_path }}"
+    matches: "{{ candidates | rejectattr('library_version', 'equalto', package_version) | list }}"
+
+- name: Record that library version on the application
+  ansible.builtin.set_fact:
+    concert_applications: "{{ concert_applications | rejectattr('name', 'equalto', app.name) | list + [updated] }}"
+  vars:
+    repo: "{{ (app_topology.json.source_repos | default([]) | first).repo_url | default(app.repository | default('')) }}"
+    updated:
+      name: "{{ app.name }}"
+      current_version: "{{ package_hit.library_version }}"
+      package_version: "{{ package_hit.library_version }}"
+      repository: "{{ repo }}"
+      owner_team: "{{ app.owner_team | default('') }}"
+  when: package_hit | default({}) | length > 0

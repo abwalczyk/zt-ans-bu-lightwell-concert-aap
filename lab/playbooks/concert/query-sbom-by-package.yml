@@ -69,6 +69,14 @@
         label: "{{ item.name | default('application') }}"
       when: not demo_mode
 
+    - name: Attach library versions from each application topology
+      ansible.builtin.include_tasks: record-library-version.yml
+      loop: "{{ concert_applications | default([]) }}"
+      loop_control:
+        loop_var: app
+        label: "{{ app.name }}"
+      when: not demo_mode
+
     - name: Shape the inventory the rest of the playbook reads
       ansible.builtin.set_fact:
         inventory_data:

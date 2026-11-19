@@ -1,0 +1,14 @@
+{
+  "package_name": "h2",
+  "package_version": "1.4.200.rhlw-00001",
+  "previous_version": "1.4.200",
+  "artifact_id": "h2-1.4.200.rhlw-00001",
+  "repository": "lightwell-remediated",
+  "artifact_url": "https://nexus.example.com/repository/lightwell-remediated/com/h2database/h2/1.4.200.rhlw-00001/h2-1.4.200.rhlw-00001.jar",
+  "checksum": "sha256:sample",
+  "fixes_cve": "CVE-2021-42392",
+  "severity": "critical",
+  "target_app": "wire-transfer-svc",
+  "deployment_status": "",
+  "event_source": "manual"
+}

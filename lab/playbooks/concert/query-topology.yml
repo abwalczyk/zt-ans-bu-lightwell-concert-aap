@@ -62,14 +62,44 @@
         - not demo_mode
         - concert_topology_response.status | int == 404
 
+    - name: Read the Concert application record
+      ansible.builtin.uri:
+        url: "{{ concert_url }}/applications/{{ application }}"
+        method: GET
+        headers:
+          Authorization: "C_API_KEY {{ concert_api_key }}"
+          InstanceId: "{{ concert_instance_id }}"
+          Content-Type: "application/json"
+        validate_certs: false
+        status_code: [200, 404]
+      register: concert_application_response
+      when:
+        - not demo_mode
+        - concert_topology_response.status | int == 200
+
+    - name: Turn Concert environments into deployments the route can read
+      ansible.builtin.set_fact:
+        topology_deployments: "{{ topology_deployments | default([]) + [row] }}"
+      vars:
+        row:
+          environment: "{{ item.name | default('unknown') }}"
+          namespace: "{{ item.name | default('unknown') }}"
+      loop: "{{ concert_topology_response.json.environments | default([]) }}"
+      loop_control:
+        label: "{{ item.name | default('environment') }}"
+      when:
+        - not demo_mode
+        - concert_topology_response.status | int == 200
+
     - name: Normalize the live Concert topology
       ansible.builtin.set_fact:
         topology_data:
           application: "{{ application }}"
           repository: "{{ repo }}"
           build_artifacts: "{{ concert_topology_response.json.build_artifacts | default([]) }}"
-          deployments: "{{ concert_topology_response.json.deployments | default([]) }}"
+          deployments: "{{ topology_deployments | default([]) }}"
           downstream_dependencies: "{{ concert_topology_response.json.downstream_dependencies | default([]) }}"
+        app_criticality: "{{ concert_application_response.json.criticality | default(0) }}"
       vars:
         repos: "{{ concert_topology_response.json.source_repos | default([]) }}"
         repo: "{{ (repos | first).repo_url | default('') if (repos | length > 0) else '' }}"
@@ -153,6 +183,16 @@
       when:
         - derived_governance_route is not defined
         - route_dependency_count | int > 0
+
+    # Concert criticality 5 is the value stored for wire-transfer-svc. The
+    # workshop treats that application as needs_approval: the CVE can be
+    # critical and the service can be in production, and a person still merges.
+    - name: Route a high-criticality application to manual patching
+      ansible.builtin.set_fact:
+        derived_governance_route: manual_patching_required
+      when:
+        - derived_governance_route is not defined
+        - app_criticality | default(0) | int >= 4
 
     - name: Route a production high-severity fix to auto patch
       ansible.builtin.set_fact:
